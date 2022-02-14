@@ -1,0 +1,7 @@
+[console_scripts]
+teach_api = teach.cli.api:main
+teach_download = teach.cli.download:main
+teach_eval = teach.cli.eval:main
+teach_inference = teach.cli.inference:main
+teach_replay = teach.cli.replay:main
+
