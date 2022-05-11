@@ -115,7 +115,9 @@ rm et_checkpoints.zip
 ```
 
 Perform data preprocessing (this extracts image features and does some processing of game jsons). 
-This step is **optional** as we already provide the preprocessed version of the dataset. However, we provide the command here for those who want to perform additional preprocessing. 
+
+<!--- This step is **optional** as we already provide the preprocessed version of the dataset. However, we provide the command here for those who want to perform additional preprocessing. --->
+
 ```buildoutcfg
 python -m modeling.datasets.create_dataset \
     with args.visual_checkpoint=$TEACH_LOGS/pretrained/fasterrcnn_model.pth \
