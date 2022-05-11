@@ -111,8 +111,8 @@ class InferenceRunner:
 
         files_to_process = game_files[start_index:end_index]
 
-        InferenceRunner._run(process_index, files_to_process, config, er)
-        return None
+        # InferenceRunner._run(process_index, files_to_process, config, er)
+        # return None
 
         process = mp.Process(target=InferenceRunner._run, args=(process_index, files_to_process, config, er))
 
