@@ -1,3 +1,4 @@
+from operator import imod
 import os
 import random
 import json
@@ -239,6 +240,7 @@ class Module(nn.Module):
 
                 # Given the model output, convert into executable action
                 m_preds = self.extract_preds(m_out, traj_data)
+                # import ipdb; ipdb.set_trace()
                 p_train.update(m_preds)
 
                 loss = self.compute_loss(m_out, traj_data, feat)
@@ -298,7 +300,7 @@ class Module(nn.Module):
                                 gt_dict) in batches.items():
                     feat = self.featurize(traj_data, load_frames=False)
                     feat['frames'] = input_dict['frames']
-
+                    # import ipdb; ipdb.set_trace()
                     m_out = self.forward(feat)
                     m_preds = self.extract_preds(m_out, traj_data)
                     p_dev.update(m_preds)

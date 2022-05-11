@@ -124,7 +124,11 @@ class Module(Base):
             for t in range(max_len):
                 combined_utts_to_t = combined_utts[:t]
                 combined_utts_to_t = sum(combined_utts_to_t, [])
-                lang_goal_instr = lang_goal + combined_utts_to_t
+                if self.args.agent == "commander":
+                    lang_goal_instr = lang_goal + combined_utts_to_t
+                else:
+                    lang_goal_instr = combined_utts_to_t if len(combined_utts_to_t)>0 else [3] #<<mask>>
+
                 feat['lang_goal_instr'].append(lang_goal_instr)
 
             #########
@@ -184,7 +188,8 @@ class Module(Base):
                                        batch_first=True,
                                        padding_value=self.pad)
                 seq_lengths = np.array(list(map(len, v)))
-                embed_seq = self.emb_word(pad_seq)
+                
+                embed_seq = self.emb_word(pad_seq.long())
                 packed_input = pack_padded_sequence(embed_seq,
                                                     seq_lengths,
                                                     batch_first=True,
@@ -206,6 +211,7 @@ class Module(Base):
                 pad_seq = pad_sequence(seqs,
                                        batch_first=True,
                                        padding_value=self.pad)
+                
                 feat[k] = pad_seq
             else:
                 # default: tensorize and pad sequence
@@ -218,7 +224,11 @@ class Module(Base):
                 pad_seq = pad_sequence(seqs,
                                        batch_first=True,
                                        padding_value=self.pad)
+                
                 feat[k] = pad_seq
+        
+        # for k, v in feat.items():
+
         return feat
 
     def forward(self, feat, max_decode=300):
@@ -273,7 +283,6 @@ class Module(Base):
         '''
         forward the model for a single time-step (used for real-time execution during eval)
         '''
-
         # encode language features
         if self.r_state['cont_lang'] is None and self.r_state[
                 'enc_lang'] is None:
@@ -386,11 +395,10 @@ class Module(Base):
         p_alow = out['out_action_low'].view(
             -1, len(self.vocab[f'{self.args.agent}_action_low']))
         l_alow = feat[f'{self.args.agent}_action_low'].view(-1)
-
         # action loss
         pad_valid = (l_alow != self.pad)
         alow_loss = F.cross_entropy(p_alow, l_alow, reduction='none')
-        alow_loss *= pad_valid.float()
+        # alow_loss *= pad_valid.float()
         alow_loss = alow_loss.mean()
         losses['action_low'] = alow_loss * self.args.action_loss_wt
 
