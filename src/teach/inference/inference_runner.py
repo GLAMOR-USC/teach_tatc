@@ -17,6 +17,7 @@ from PIL import Image
 
 from teach.dataset.definitions import Definitions
 from teach.dataset.interaction import Interaction
+from teach.dataset.task import Task
 from teach.eval.compute_metrics import create_new_traj_metrics, evaluate_traj
 from teach.inference.actions import obj_interaction_actions
 from teach.inference.teach_model import TeachModel
@@ -101,7 +102,6 @@ class InferenceRunner:
         num_files_per_process = InferenceRunner._get_num_files_per_process(
             num_files=num_files, num_processes=config.num_processes)
 
-        # InferenceRunner._run(process_index, game_files[0:1], config, er)
 
         start_index, end_index = InferenceRunner._get_range_to_process(
             process_index=process_index,
@@ -110,6 +110,9 @@ class InferenceRunner:
         )
 
         files_to_process = game_files[start_index:end_index]
+
+        InferenceRunner._run(process_index, files_to_process, config, er)
+        return None
 
         process = mp.Process(target=InferenceRunner._run, args=(process_index, files_to_process, config, er))
 
@@ -156,17 +159,25 @@ class InferenceRunner:
         game = InferenceRunner._load_game(instance_file)
         game['instance_id'] = instance_id
 
-        game["state_changes"] = get_state_changes(game["tasks"][0]["episodes"][0]['initial_state'], game["tasks"][0]["episodes"][0]["final_state"])
-        game_check_task = create_task_thor_from_state_diff(game["state_changes"])
         game_file = InferenceRunner._get_game_file(game, config)
 
         metrics = create_new_traj_metrics(game)
         logger.debug(f"Processing instance {instance_id}")
 
-        er.set_episode_by_fn_and_idx(game_file, 0, 0)
-        api_success, init_state = er._set_up_new_episode(None,
-                                                         turn_on_lights=False,
-                                                         task=game_check_task)
+        er.set_episode_by_fn_and_idx(game_file, 0,0)
+
+        api_success, init_state = er._set_up_new_episode(None, turn_on_lights=False)
+
+        (
+            success,
+            initial_goal_conditions_total,
+            initial_goal_conditions_satisfied,
+        ) = InferenceRunner._check_episode_progress(er,
+                                                    er.simulator.current_task)
+
+        ## if success==1: there's nothing to do in this episode
+
+        assert initial_goal_conditions_satisfied <= initial_goal_conditions_total
 
         model_started_success = False
         try:
@@ -188,6 +199,7 @@ class InferenceRunner:
                 traj_steps_taken += 1
                 try:
                     commander_img, driver_img = InferenceRunner._get_latest_image(er)
+                    commander_pose, driver_pose = InferenceRunner._get_poses(er)
 
                     commander_img_name = InferenceRunner._save_image(
                         config, game, commander_img, traj_steps_taken)
@@ -196,22 +208,21 @@ class InferenceRunner:
 
                     # Get next commander action
                     commander_action, obj_cls, commander_utterance = model.get_next_action_commander(
-                        commander_img, driver_img, game, prev_action, commander_img_name, driver_img_name, instance_file)
+                        commander_img, game, prev_action, commander_img_name, instance_file)
 
                     # Get next driver action
                     driver_action, obj_relative_coord, driver_utterance = model.get_next_action_driver(
-                        commander_img, driver_img, game, prev_action, commander_img_name, driver_img_name, instance_file)
+                        driver_img, game, prev_action, driver_img_name, instance_file)
 
-                    # commander_action = "OpenProgressCheck" ### debug
                     # Execute actions in simulator
                     commander_step_success, result = InferenceRunner._execute_commander_action(
-                        er.simulator, commander_action, obj_cls)
+                        er.simulator, commander_action, obj_cls, commander_utterance)
 
                     if commander_action == "OpenProgressCheck":
                         model.pc_result = result
 
                     driver_step_success = InferenceRunner._execute_driver_action(
-                        er.simulator, driver_action, obj_relative_coord)
+                        er.simulator, driver_action, obj_relative_coord, driver_utterance)
 
                     InferenceRunner._update_metrics(metrics, commander_action,
                                                     obj_cls, driver_action,
@@ -246,12 +257,15 @@ class InferenceRunner:
         ) = InferenceRunner._check_episode_progress(er,
                                                     er.simulator.current_task)
 
+        assert final_goal_conditions_total == initial_goal_conditions_total
+
         metrics_diff = evaluate_traj(
             success,
             game,
             traj_steps_taken,
             final_goal_conditions_total,
             final_goal_conditions_satisfied,
+            initial_goal_conditions_satisfied
         )
         metrics.update(metrics_diff)
 
@@ -307,12 +321,16 @@ class InferenceRunner:
         return init_success, er if init_success else None
 
     @staticmethod
+    def _get_poses(er):
+        return er.simulator.get_current_pose(agent_id=0), er.simulator.get_current_pose(agent_id=1)
+
+    @staticmethod
     def _get_latest_image(er):
         images = er.simulator.get_latest_images()
         return Image.fromarray(images["allo"]), Image.fromarray(images["ego"])
 
     @staticmethod
-    def _execute_commander_action(simulator, action, obj_cls):
+    def _execute_commander_action(simulator, action, obj_cls, utterance=None):
         step_success = True
         r = None
 
@@ -320,16 +338,24 @@ class InferenceRunner:
             r = simulator.apply_progress_check(action,
                                                agent_id=0,
                                                query=obj_cls)
+        elif action in ["Text"]: #, "Speech"]:
+            simulator.keyboard(agent_id=0, utterance=utterance)
         else:
-            pass
+            step_success, _, _ = simulator.apply_motion(motion_name = action, agent_id=0)
+        # else:
+        #     pass
         return step_success, r
 
     @staticmethod
-    def _execute_driver_action(simulator, action, obj_relative_coord):
-        if action in ["Stop", "NoOp"] :
+    def _execute_driver_action(simulator, action, obj_relative_coord, utterance=None):
+        if action in ["NoOp"]:
+            return True
+        
+        if action in ["Stop"]:
             return True
 
-        if action in ["Text", "Speech"]:
+        if action in ["Text"]: #, "Speech"]:
+            simulator.keyboard(agent_id=1, utterance=utterance)
             return True
 
         if action in obj_interaction_actions:
@@ -339,7 +365,7 @@ class InferenceRunner:
                 action, 1, x, y)
             return step_success
 
-        step_success, _, _ = simulator.apply_motion(action, 1)
+        step_success, _, _ = simulator.apply_motion(motion_name = action, agent_id=1)
         return step_success
 
     @staticmethod

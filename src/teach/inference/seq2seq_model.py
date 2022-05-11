@@ -2,7 +2,7 @@ import argparse
 import os
 from pathlib import Path
 from typing import List
-
+import random
 import numpy as np
 import torch
 from modeling import constants
@@ -134,7 +134,7 @@ class Seq2SeqModel(TeachModel):
         self.input_dict["lang_goal_instr"] = lang_goal
         return True
 
-    def extract_progress_check_subtask_string(self):
+    def extract_progress_check_subtask_string(self, task=None):
         if self.pc_result["success"]:
             return ""
         
@@ -142,24 +142,23 @@ class Seq2SeqModel(TeachModel):
             if subgoal["success"] == 1:
                 continue 
             
-            if subgoal["steps"][0]["success"] == 0:
+            if subgoal["steps"][0]["success"] == 0 and len(subgoal["description"])>0:
                 return subgoal["description"]
-
+            
             for step in subgoal["steps"]:
                 if step["success"] == 1: 
                     continue 
-
-                return step["desc"]
+                
+                if len(step["desc"])>0:
+                    return step["desc"]
     
-        return ""
+        return task
 
     def get_next_action_commander(self,
                                   commander_img,
-                                  driver_img,
                                   tatc_instance,
                                   prev_action,
                                   commander_img_name=None,
-                                  driver_img_name=None,
                                   tatc_name=None):
         """
         Returns a commander action
@@ -179,10 +178,8 @@ class Seq2SeqModel(TeachModel):
 
         # Featurize images
         commander_img_feat = self.extractor.featurize([commander_img], batch=1)
-        driver_img_feat = self.extractor.featurize([driver_img], batch=1)
 
         self.input_dict["commander_frames"] = commander_img_feat.unsqueeze(0)
-        self.input_dict["driver_frames"] = driver_img_feat.unsqueeze(0)
 
         with torch.no_grad():
             m_out = self.commander_model.step(
@@ -201,12 +198,18 @@ class Seq2SeqModel(TeachModel):
 
         action, obj_cls = m_pred["action"], m_pred["obj_cls"]
 
-        text = None
+        # if prev_action==None or (prev_action!=None and prev_action['commander_action']==action):
+        #     action = 'OpenProgressCheck'
 
         # Simple commander speaker
         # This can also generated from a text generation language model
-        if action == "Text" and self.pc_result != None:
-            latest_instr = self.extract_progress_check_subtask_string()
+
+        text = None
+        if action == "Text":
+            if self.pc_result != None and prev_action!=None:
+                latest_instr = self.extract_progress_check_subtask_string(task = tatc_instance['tasks'][0]['desc'])
+            else:
+                latest_instr =  tatc_instance['tasks'][0]['desc']
             if len(latest_instr)>0:
                 text = latest_instr
                 latest_instr = ["<<commander>>"] + self.preprocessor.process_sentences([latest_instr])[0] + ["<<sent>>"]
@@ -229,11 +232,9 @@ class Seq2SeqModel(TeachModel):
         return action, obj_cls, text
 
     def get_next_action_driver(self,
-                               commander_img,
                                driver_img,
                                tatc_instance,
                                prev_action,
-                               commander_img_name=None,
                                driver_img_name=None,
                                tatc_name=None):
         """
@@ -252,9 +253,7 @@ class Seq2SeqModel(TeachModel):
         an object in a 10x10 pixel patch around the pixel indicated by the coordinate if the desired action can be
         performed on it, and executes the action in AI2-THOR.
         """
-        commander_img_feat = self.extractor.featurize([commander_img], batch=1)
         driver_img_feat = self.extractor.featurize([driver_img], batch=1)
-        self.input_dict["commander_frames"] = commander_img_feat.unsqueeze(0)
         self.input_dict["driver_frames"] = driver_img_feat.unsqueeze(0)
 
         with torch.no_grad():
@@ -275,11 +274,14 @@ class Seq2SeqModel(TeachModel):
         if not action in obj_interaction_actions:
             predicted_click = None
 
-
+        # if prev_action!=None and prev_action['driver_action']==action:
+        #     # choosing random navigation action
+        #     action = random.choice(['Forward', 'Backward', 'Turn Left', 'Turn Right'])
+       
         # Simple driver speaker
         # This can also generated from a text generation language model
         text = None
-        if action == "Text" and self.pc_result != None:
+        if action == "Text":
             text = "What should I do next" 
             utterance = text
             utterance = ["<<driver>>"] + self.preprocessor.process_sentences([utterance])[0] + ["<<sent>>"]

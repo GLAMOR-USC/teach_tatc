@@ -10,15 +10,15 @@ from teach.utils import create_task_thor_from_state_diff
 
 
 def evaluate_traj(success, tatc_instance, traj_len, final_gc_total,
-                  final_gc_satisfied):
-    final_gc_satisfied = min(final_gc_total, final_gc_satisfied)
-
-    total_goal_conditions = final_gc_total
+                  final_gc_satisfied, initial_gc_satisfied):
+                  
+    final_gc_satisfied = min(final_gc_total, final_gc_satisfied) - initial_gc_satisfied
     # TODO: Remove this after testing and recheck game instances to remove any where there is nothing to do
-    if total_goal_conditions != 0:
+    if final_gc_total != 0:
+        final_gc_total = final_gc_total - initial_gc_satisfied
         unsatisfied_goal_conditions = final_gc_total - final_gc_satisfied
         goal_condition_success_rate = 1.0 - (unsatisfied_goal_conditions /
-                                             total_goal_conditions)
+                                             final_gc_total)
     else:
         goal_condition_success_rate = 1
 
@@ -72,6 +72,11 @@ def aggregate_metrics(traj_stats, args):
     """
     compute overall success and goal_condition success rates along with path-weighted metrics
     """
+    
+    for k, v in traj_stats.items():
+        if v["total_goal_conditions"] == 0:
+            del traj_stats[k]
+
     # stats
     num_successes = len(
         [k for k, v in traj_stats.items() if v["success"] == 1])
