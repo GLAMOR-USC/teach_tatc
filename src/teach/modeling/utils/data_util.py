@@ -151,7 +151,7 @@ def get_preprocessor(PreprocessorClass, subgoal_ann, lock, vocab_path=None):
                 vocab.counts[w] = loaded_dict["counts"][w]
 
     driver_actions_high_init_words = [
-        "Navigate", "Pickup", "Place", "Open", "Close", "ToggleOn",
+        "<<pad>>", "Navigate", "Pickup", "Place", "Open", "Close", "ToggleOn",
         "ToggleOff", "Slice", "Pour", "object", "NoOp"
     ]
 
@@ -164,7 +164,7 @@ def get_preprocessor(PreprocessorClass, subgoal_ann, lock, vocab_path=None):
     ]
 
     commander_action_low_init_words = [
-        "OpenProgressCheck", "SelectOid", "SearchObject", "Text", "NoOp"
+        "OpenProgressCheck", "SelectOid", "SearchObject", "Text", "NoOp", "Done"
     ]
 
     # TODO: could add high level commander actions here

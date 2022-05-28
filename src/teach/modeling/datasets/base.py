@@ -75,11 +75,17 @@ class BaseDataset(TorchDataset):
 
         # load jsons with pickle and parse them
         if jsons:
+            # import ipdb; ipdb.set_trace()
             with open(os.path.join(path, self.partition, "jsons.pkl"),
                       "rb") as jsons_file:
                 jsons = pickle.load(jsons_file)
 
             self.jsons_and_keys = []
+
+            # skip the ones with super long dialogue 
+            skip = ['/data/anthony/teach/games_final/train/3533a673abb9857a_eac8.game.json',
+                    '/data/anthony/teach/games_final/train/5b7358d4531d803a_1cb2.game.json']
+            
             for idx in range(len(jsons)):
                 key = "{:06}".format(idx).encode("ascii")
                 if key in jsons:
@@ -91,6 +97,10 @@ class BaseDataset(TorchDataset):
                         else:
                             json["task"] = "/".join(
                                 json["root"].split("/")[-3:-1])
+                            
+                        if json['root'] in skip:
+                            continue 
+                        
                         # add dataset idx and partition into the json
                         json["dataset_name"] = self.name
                         self.jsons_and_keys.append((json, key))

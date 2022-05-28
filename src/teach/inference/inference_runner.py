@@ -111,14 +111,14 @@ class InferenceRunner:
 
         files_to_process = game_files[start_index:end_index]
 
-        # InferenceRunner._run(process_index, files_to_process, config, er)
-        # return None
+        InferenceRunner._run(process_index, files_to_process, config, er)
+        return None
 
-        process = mp.Process(target=InferenceRunner._run, args=(process_index, files_to_process, config, er))
+        # process = mp.Process(target=InferenceRunner._run, args=(process_index, files_to_process, config, er))
 
-        process.start()
-        time.sleep(0.1)
-        return process
+        # process.start()
+        # time.sleep(0.1)
+        # return process
 
     @staticmethod
     def _run(process_index, files_to_process, config: InferenceRunnerConfig,
@@ -130,7 +130,7 @@ class InferenceRunner:
         model = config.model_class(process_index,
                                    config.num_processes,
                                    model_args=config.model_args)
-
+        import ipdb; ipdb.set_trace()
         for file_index, instance_file in enumerate(files_to_process):
             try:
                 instance_id, instance_metrics = InferenceRunner._run_game(
@@ -164,7 +164,7 @@ class InferenceRunner:
         metrics = create_new_traj_metrics(game)
         logger.debug(f"Processing instance {instance_id}")
 
-        er.set_episode_by_fn_and_idx(game_file, 0,0)
+        er.set_episode_by_fn_and_idx(game_file, 0, 0)
 
         api_success, init_state = er._set_up_new_episode(None, turn_on_lights=False)
 
@@ -176,7 +176,6 @@ class InferenceRunner:
                                                     er.simulator.current_task)
 
         ## if success==1: there's nothing to do in this episode
-
         assert initial_goal_conditions_satisfied <= initial_goal_conditions_total
 
         model_started_success = False

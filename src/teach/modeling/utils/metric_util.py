@@ -1,7 +1,7 @@
 import collections
 import re
 import string
-
+from sklearn.metrics import f1_score, accuracy_score
 
 def normalize_answer(s):
     """
@@ -48,3 +48,10 @@ def compute_f1(a_gold, a_pred):
     recall = 1.0 * num_same / len(gold_toks)
     f1 = (2 * precision * recall) / (precision + recall)
     return f1
+
+def compute_exact_list(label, pred):
+    return accuracy_score(label, pred)
+    
+def compute_f1_list(label, pred):
+    return f1_score(label, pred, average='macro')
+    

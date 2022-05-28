@@ -75,8 +75,7 @@ class Seq2SeqModel(TeachModel):
         self.vocab = None
 
         # Setup commander and driver models
-        self.commander_model = self.set_up_model(process_index,
-                                                 agent="commander")
+        self.commander_model = self.set_up_model(process_index, agent="commander")
         self.driver_model = self.set_up_model(process_index, agent="driver")
         self.vocab = self.commander_model.vocab
         self.preprocessor = Preprocessor(vocab=self.driver_model.vocab)
@@ -123,15 +122,16 @@ class Seq2SeqModel(TeachModel):
         self.driver_model.reset()
 
         # Setup input for tatc instance and process the goal instruction
-        self.input_dict = {}
-        tatc_instance = self.preprocessor.process_goal_instr(
-            tatc_instance, is_test_split=True)
-        lang_goal = torch.tensor(tatc_instance["lang_goal"],
-                                 dtype=torch.long).to(self.args.device)
+        # We don't need to process the goal instruction
+        # self.input_dict = {}
+        # tatc_instance = self.preprocessor.process_goal_instr(
+        #     tatc_instance, is_test_split=True)
+        # lang_goal = torch.tensor(tatc_instance["lang_goal"],
+        #                          dtype=torch.long).to(self.args.device)
 
-        # Embed the language goal
-        lang_goal = self.commander_model.emb_word(lang_goal)
-        self.input_dict["lang_goal_instr"] = lang_goal
+        # # Embed the language goal
+        # lang_goal = self.commander_model.emb_word(lang_goal)
+        # self.input_dict["lang_goal_instr"] = lang_goal
         return True
 
     def extract_progress_check_subtask_string(self, task=None):

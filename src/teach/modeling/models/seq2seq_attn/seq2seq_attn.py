@@ -8,7 +8,7 @@ from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_se
 import modeling.models.seq2seq_attn.modules.vnn as vnn
 from modeling.models.seq2seq_attn.seq2seq import Module as Base
 from modeling.utils import data_util
-from modeling.utils.metric_util import compute_f1, compute_exact
+from modeling.utils.metric_util import compute_f1, compute_exact, compute_f1_list, compute_exact_list
 
 
 class Module(Base):
@@ -109,8 +109,7 @@ class Module(Base):
             # inputs
             #########
             # goal and instr language
-            lang_goal, combined_utts = ex['lang_goal'][0], ex[
-                'combined_utterances']
+            lang_goal, combined_utts = ex['lang_goal'][0], ex['combined_utterances']
 
             # zero inputs if specified
             lang_goal = self.zero_input(
@@ -119,18 +118,27 @@ class Module(Base):
                 combined_utts) if self.args.zero_instr else combined_utts
 
             # append goal + instr
-            # TODO: fix this, change this to some parameter, should this be min(150, len(combined_utts))?
-            max_len = 150
-            for t in range(max_len):
+            # generate the dialogue history 
+            seq_len = len(ex['actions_low'])
+
+            dialogue_hist = []
+            for t in range(seq_len):
                 combined_utts_to_t = combined_utts[:t]
                 combined_utts_to_t = sum(combined_utts_to_t, [])
-                if self.args.agent == "commander":
-                    lang_goal_instr = lang_goal + combined_utts_to_t
-                else:
-                    lang_goal_instr = combined_utts_to_t if len(combined_utts_to_t)>0 else [3] #<<mask>>
+                
+                if len(combined_utts_to_t) == 0:
+                    combined_utts_to_t = [self.vocab['word'].word2index("<<pad>>")]
+                    
+                # agents are not given the goal instruction
+                # dialogue_hist.append(combined_utts_to_t)
+            
+                feat['lang_goal_instr'].append(combined_utts_to_t)
 
-                feat['lang_goal_instr'].append(lang_goal_instr)
-
+            feat['seq_lens'].append(seq_len)    
+            # if seq_len > 500:
+            #     print(ex['root'], seq_len)
+            # print(feat['seq_lens'])
+    
             #########
             # outputs
             #########
@@ -179,6 +187,7 @@ class Module(Base):
                     commander_action_low_valid_interact)
                 feat["driver_action_low_valid_interact"].append(
                     driver_action_low_valid_interact)
+        
         # tensorization and padding
         for k, v in feat.items():
             if k in {'lang_goal_instr'}:
@@ -213,6 +222,8 @@ class Module(Base):
                                        padding_value=self.pad)
                 
                 feat[k] = pad_seq
+            elif k == "seq_lens":
+                feat[k] = torch.tensor(v, device=device)
             else:
                 # default: tensorize and pad sequence
                 seqs = [
@@ -227,8 +238,6 @@ class Module(Base):
                 
                 feat[k] = pad_seq
         
-        # for k, v in feat.items():
-
         return feat
 
     def forward(self, feat, max_decode=300):
@@ -245,7 +254,7 @@ class Module(Base):
 
     def encode_lang(self, feat):
         '''
-        encode goal+instr language
+        encode goal + instr language
         '''
         emb_lang_goal_instr = feat['lang_goal_instr']
         self.lang_dropout(emb_lang_goal_instr.data)
@@ -259,14 +268,24 @@ class Module(Base):
         self.lang_dropout(enc_lang_goal_instr)
         cont_lang_goal_instr = self.enc_att(enc_lang_goal_instr)
 
-        # cont_lang_goal_instr
+        seq_len = feat['seq_lens']
+        bs = seq_len.shape[0]
+        max_seq_len = max(seq_len)
+        cum_sum = torch.cumsum(seq_len, dim=0)
+        _, max_diag_len, h_dim = enc_lang_goal_instr.shape
+        device = enc_lang_goal_instr.device 
+        
         if not self.test_mode:
-            cont_lang_goal_instr = cont_lang_goal_instr.view(
-                -1, 150, *cont_lang_goal_instr.shape[1:])
-            enc_lang_goal_instr = enc_lang_goal_instr.view(
-                -1, 150, *enc_lang_goal_instr.shape[1:])
-
-        return cont_lang_goal_instr, enc_lang_goal_instr
+            cont_lang_goal_instr_out = torch.zeros((bs, max_seq_len, h_dim), device=device)
+            enc_lang_goal_instr_out = torch.zeros((bs, max_seq_len, max_diag_len, h_dim), device=device)
+            start = 0
+            
+            for i in range(bs):
+                end = cum_sum[i]
+                cont_lang_goal_instr_out[i, :seq_len[i]] = cont_lang_goal_instr[start:end]
+                enc_lang_goal_instr_out[i, :seq_len[i]] = enc_lang_goal_instr[start:end]
+                start = end  
+        return cont_lang_goal_instr_out, enc_lang_goal_instr_out
 
     def reset(self):
         '''
@@ -339,25 +358,26 @@ class Module(Base):
         for ex, alow, alow_aux in zip(
                 batch, out['out_action_low'].max(2)[1].tolist(),
                 out[f'out_action_low_{self.aux_pred_type}']):
+            
             # remove padding tokens
-            if self.pad in alow:
-                pad_start_idx = alow.index(self.pad)
-                alow = alow[:pad_start_idx]
+            # if self.pad in alow:
+            #     pad_start_idx = alow.index(self.pad)
+            #     alow = alow[:pad_start_idx]
 
-            if clean_special_tokens:
-                # remove <<stop>> tokens
-                if self.stop_token in alow:
-                    stop_start_idx = alow.index(self.stop_token)
-                    alow = alow[:stop_start_idx]
+            # if clean_special_tokens:
+            #     # remove <<stop>> tokens
+            #     if self.stop_token in alow:
+            #         stop_start_idx = alow.index(self.stop_token)
+            #         alow = alow[:stop_start_idx]
 
             # index to API actions
             words = self.vocab[f'{self.args.agent}_action_low'].index2word(
                 alow)
 
             task_id_ann = self.get_task_and_ann_id(ex)
-
             pred[task_id_ann] = {
-                'action_low': ' '.join(words),
+                'action_low': alow,
+                'action_low_text': words,
                 f'action_{self.aux_pred_type}': alow_aux,
             }
 
@@ -390,7 +410,6 @@ class Module(Base):
         loss function for Seq2Seq agent
         '''
         losses = dict()
-
         # GT and predictions
         p_alow = out['out_action_low'].view(
             -1, len(self.vocab[f'{self.args.agent}_action_low']))
@@ -463,18 +482,16 @@ class Module(Base):
                              gt_dict) in batch.items():
 
                 for task in traj_data:
-                    i = self.get_task_and_ann_id(task)
+                    game_id = self.get_task_and_ann_id(task)
 
-                    if not i in preds: continue 
+                    if not game_id in preds: continue 
 
                     idx = 0 if self.args.agent == "commander" else 1
-                    label = ' '.join([
-                        a[idx]['action_name']
-                        for a in task['actions_low']
-                    ])
-                    m['action_low_f1'].append(
-                        compute_f1(label.lower(), preds[i]['action_low'].lower()))
+                    labels = [a[idx]['action'] for a in task['actions_low']]
+                    
+                    # m['action_low_f1'].append(
+                    #     compute_f1_list(labels, preds[game_id]['action_low'][:len(labels)]))
                     m['action_low_em'].append(
-                        compute_exact(label.lower(), preds[i]['action_low'].lower()))
+                        compute_exact_list(labels, preds[game_id]['action_low'][:len(labels)]))
 
         return {k: sum(v) / len(v) for k, v in m.items()}

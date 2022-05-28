@@ -42,9 +42,9 @@ class Module(nn.Module):
         self.vocab_out = vocab[action_emb_key]
 
         # end tokens
-        self.stop_token = self.vocab['word'].word2index("<<stop>>",
-                                                        train=False)
-        self.seg_token = self.vocab['word'].word2index("<<seg>>", train=False)
+        # self.stop_token = self.vocab['word'].word2index("<<stop>>",
+        #                                                 train=False)
+        # self.seg_token = self.vocab['word'].word2index("<<seg>>", train=False)
 
         # set random seed (Note: this is not the seed used to initialize THOR object locations)
         random.seed(a=args.seed)
@@ -52,6 +52,36 @@ class Module(nn.Module):
         # summary self.writer
         self.summary_writer = None
 
+    def random_test(self, loaders_train, epoch, optimizer, args=None, name='train', iteration=0):
+        logger.info("Epoch {}/{}".format(epoch, args.epochs))
+        self.train()
+        
+        train_iterators = {
+            key: iter(loader)
+            for key, loader in loaders_train.items()
+        }
+
+        p_train = {}
+        m_train = collections.defaultdict(list)
+        total_train_loss = list()
+        train_iter = iteration
+
+        epoch_length = len(next(iter(loaders_train.values())))
+
+        for _ in tqdm(range(epoch_length), desc="train"):
+            # sample batches
+            batches = data_util.sample_batches(train_iterators,
+                                                self.args.device, self.pad,
+                                                self.args)
+
+            # iterate over batches
+            for batch_name, (traj_data, input_dict,
+                                gt_dict) in batches.items():
+                feat = self.featurize(traj_data)
+                
+                del feat
+            del batches
+    
     def run_train(self, loaders, info, args=None, optimizer=None):
         '''
         training loop
@@ -89,11 +119,20 @@ class Module(nn.Module):
         train_iter, valid_seen_iter, valid_unseen_iter = 0, 0, 0
 
         logger.info("Saving to: %s" % args.dout)
+        
+        # figure out all the ones with the longest dialogue
+        # self.random_test(loaders_valid_seen, 0, optimizer, args=args, name='train', iteration=train_iter)
+        # self.random_test(loaders_valid_unseen, 0, optimizer, args=args, name='train', iteration=train_iter)
 
         # training loop
         for epoch in range(info["progress"], args.epochs):
             p_train, train_iter, total_train_loss, m_train = self.train_one_epoch(loaders_train, epoch, optimizer, args=args, name='train', iteration=train_iter)
-
+            m_train.update(self.compute_metric(p_train, loaders_train))
+            m_train['total_loss'] = float(total_train_loss)
+            self.summary_writer.add_scalar('train/total_loss',
+                                           m_train['total_loss'],
+                                           train_iter)
+            
             # compute metrics for valid_seen
             p_valid_seen, valid_seen_iter, total_valid_seen_loss, m_valid_seen = self.run_pred(
                 loaders_valid_seen,
@@ -124,6 +163,7 @@ class Module(nn.Module):
 
             stats = {
                 'epoch': epoch,
+                'train': m_train,
                 'valid_seen': m_valid_seen,
                 'valid_unseen': m_valid_unseen
             }
@@ -209,7 +249,7 @@ class Module(nn.Module):
     def train_one_epoch(self, loaders_train, epoch, optimizer, args=None, name='train', iteration=0):
         logger.info("Epoch {}/{}".format(epoch, args.epochs))
         self.train()
-
+        
         train_iterators = {
             key: iter(loader)
             for key, loader in loaders_train.items()
@@ -223,15 +263,13 @@ class Module(nn.Module):
         epoch_length = len(next(iter(loaders_train.values())))
 
         for _ in tqdm(range(epoch_length), desc="train"):
-        # for _ in tqdm(range(2), desc="train"):
             # sample batches
             batches = data_util.sample_batches(train_iterators,
                                                 self.args.device, self.pad,
                                                 self.args)
 
             # iterate over batches
-            for batch_name, (traj_data, input_dict,
-                                gt_dict) in batches.items():
+            for batch_name, (traj_data, input_dict, gt_dict) in batches.items():
                 feat = self.featurize(traj_data)
                 feat['frames'] = input_dict['frames']
 
@@ -240,7 +278,6 @@ class Module(nn.Module):
 
                 # Given the model output, convert into executable action
                 m_preds = self.extract_preds(m_out, traj_data)
-                # import ipdb; ipdb.set_trace()
                 p_train.update(m_preds)
 
                 loss = self.compute_loss(m_out, traj_data, feat)
@@ -248,17 +285,12 @@ class Module(nn.Module):
                 for k, v in loss.items():
                     ln = 'loss_' + k
                     m_train[ln].append(v.item())
-                    self.summary_writer.add_scalar('train/' + ln, v.item(),
-                                                    train_iter)
 
                 # optimizer backward pass
                 optimizer.zero_grad()
                 sum_loss = sum(loss.values())
                 sum_loss.backward()
                 optimizer.step()
-
-                self.summary_writer.add_scalar('train/loss', sum_loss,
-                                                train_iter)
 
                 sum_loss = sum_loss.detach().cpu()
                 total_train_loss.append(float(sum_loss))
@@ -270,8 +302,16 @@ class Module(nn.Module):
             del batches 
             torch.cuda.empty_cache()
         
-        return p_train, train_iter, total_train_loss, m_train
+        # average batch stats
+        for k, v in m_train.items():
+            m_train[k] = sum(v) / len(v)
+            ln = 'loss_' + k
+            self.summary_writer.add_scalar('train/' + ln, m_train[k], train_iter)
 
+        total_train_loss = sum(total_train_loss) / len(total_train_loss)
+        self.summary_writer.add_scalar('train/loss', total_train_loss, train_iter)
+
+        return p_train, train_iter, total_train_loss, m_train
 
     def run_pred(self, dev, args=None, name='dev', iteration=0):
         '''
@@ -291,29 +331,24 @@ class Module(nn.Module):
         
         with torch.no_grad():
             for _ in tqdm(range(num_batches), desc=name):
-            # for _ in tqdm(range(1), desc=name):
-                # sample batches
                 batches = data_util.sample_batches(data_iter, self.args.device,
                                                 self.pad, self.args)
 
-                for batch_name, (traj_data, input_dict,
-                                gt_dict) in batches.items():
+                for batch_name, (traj_data, input_dict, gt_dict) in batches.items():
                     feat = self.featurize(traj_data, load_frames=False)
                     feat['frames'] = input_dict['frames']
-                    # import ipdb; ipdb.set_trace()
+
                     m_out = self.forward(feat)
                     m_preds = self.extract_preds(m_out, traj_data)
                     p_dev.update(m_preds)
+                    
                     loss = self.compute_loss(m_out, traj_data, feat)
 
                     for k, v in loss.items():
                         ln = 'loss_' + k
                         m_dev[ln].append(v.item())
-                        self.summary_writer.add_scalar("%s/%s" % (name, ln),
-                                                    v.item(), dev_iter)
+
                     sum_loss = sum(loss.values())
-                    self.summary_writer.add_scalar("%s/loss" % (name), sum_loss,
-                                                dev_iter)
                     total_loss.append(float(sum_loss.detach().cpu()))
                     dev_iter += len(traj_data)
 
@@ -323,8 +358,14 @@ class Module(nn.Module):
                 del batches 
                 torch.cuda.empty_cache()
 
-        m_dev = {k: sum(v) / len(v) for k, v in m_dev.items()}
+        # average batch stats
+        for k, v in m_dev.items():
+            m_dev[k] = sum(v) / len(v)
+            ln = 'loss_' + k
+            self.summary_writer.add_scalar(f'{name}/{ln}', m_dev[k], dev_iter)
+                    
         total_loss = sum(total_loss) / len(total_loss)
+        self.summary_writer.add_scalar(f"{name}/loss", total_loss, dev_iter)
         return p_dev, dev_iter, total_loss, m_dev
 
     def featurize(self, batch):
@@ -374,8 +415,7 @@ class Module(nn.Module):
                             a[idx]['action_name']
                             for a in task['actions_low']
                         ],
-                        'p_action_low':
-                        preds[i]['action_low'].split(),
+                        'p_action_low': preds[i]['action_low'],
                     }
         return debug
 

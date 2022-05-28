@@ -163,7 +163,6 @@ class ConvFrameDecoder(nn.Module):
         return action_t, aux_t, state_t, lang_attn_t
 
     def forward(self, enc, frames, gold=None, max_decode=150, state_0=None):
-        # max_t = gold.size(1) if self.training else min(max_decode, frames.shape[1])
         max_t = gold.size(1)
         batch = enc.size(0)
         e_t = self.go.repeat(batch, 1)
@@ -173,8 +172,7 @@ class ConvFrameDecoder(nn.Module):
         attn_scores = []
         aux_output = []
         for t in range(max_t):
-            action_t, aux_t, state_t, attn_score_t = self.step(
-                enc[:, min(t, enc.shape[1] - 1)], frames[:, t], e_t, state_t)
+            action_t, aux_t, state_t, attn_score_t = self.step(enc[:, t], frames[:, t], e_t, state_t)
             actions.append(action_t)
             attn_scores.append(attn_score_t)
             aux_output.append(aux_t)

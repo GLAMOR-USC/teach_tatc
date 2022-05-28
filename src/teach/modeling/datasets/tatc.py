@@ -37,8 +37,7 @@ class TATCDataset(BaseDataset):
         # Add a stop action and duplicate the last frame
         feat_dict["driver_action"].append(
             self.driver_vocab_out.word2index("Stop"))
-        # TODO: commander need a stop?
-
+        
         feat_dict["frames"] = torch.cat(
             (feat_dict["frames"], torch.unsqueeze(feat_dict["frames"][-1, :],
                                                   0)), 0)

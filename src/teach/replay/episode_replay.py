@@ -341,6 +341,7 @@ class EpisodeReplay:
                     
         if obs_dir is not None and write_episode_progress:
             self.write_progress(frame_idx, obs_dir)
+            
         return api_success, target_object_active
 
     def _add_interaction(self, idx, interact_oid, logged_success):
