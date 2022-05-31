@@ -10,6 +10,8 @@ from modeling import constants
 from modeling.datasets.tatc import TATCDataset
 from modeling.exp_configs import exp_ingredient
 from modeling.models.seq2seq_attn.configs import seq2seq_ingredient
+from modeling.models.ET.configs import et_ingredient
+
 from modeling.utils import data_util, helper_util, model_util
 
 from sacred import Experiment
@@ -17,7 +19,7 @@ from sacred import Experiment
 from teach.logger import create_logger
 from torch.nn import DataParallel
 
-ex = Experiment("train", ingredients=[exp_ingredient, seq2seq_ingredient])
+ex = Experiment("train", ingredients=[exp_ingredient, seq2seq_ingredient, et_ingredient])
 
 logger = create_logger(__name__, level=logging.INFO)
 
@@ -86,7 +88,7 @@ def create_model(args, embs_ann, vocab):
     load a model and its optimizer
     """
     prev_train_info = model_util.load_log(args.dout, stage="train")
-    # 
+    
     if args.resume and os.path.exists(os.path.join(args.dout, "latest.pth")):
         # load a saved model
         logger.info("loading from %s", str(args.dout))
@@ -226,12 +228,16 @@ def process_vocabs(datasets, args):
 
 
 @ex.automain
-def main(exp, seq2seq):
+def main(exp, seq2seq, et):
     """
     train a network using an lmdb dataset
     """
+    if exp['model'] == 'ET':
+        model_args = et 
+    else:
+        model_args = seq2seq
     # parse args
-    args = prepare(exp, seq2seq)
+    args = prepare(exp, model_args)
     # load dataset(s) and process vocabs
     datasets = []
     ann_types = iter(args.data["ann_type"])

@@ -130,7 +130,7 @@ class InferenceRunner:
         model = config.model_class(process_index,
                                    config.num_processes,
                                    model_args=config.model_args)
-        import ipdb; ipdb.set_trace()
+
         for file_index, instance_file in enumerate(files_to_process):
             try:
                 instance_id, instance_metrics = InferenceRunner._run_game(
@@ -189,7 +189,14 @@ class InferenceRunner:
                 exc_info=True)
 
         if model_started_success:
-            prev_action = None
+
+            # Keep track of history
+            driver_action_history, commander_action_history = [], []
+            driver_pose_history, commander_pose_history = [], []
+            dialogue_history = [("", "commander")]
+            dialogue = []
+            commander_action_result_history = []
+
             er.simulator.is_record_mode = True
             pred_actions = list()
 
@@ -201,42 +208,70 @@ class InferenceRunner:
                     commander_pose, driver_pose = InferenceRunner._get_poses(er)
 
                     commander_img_name = InferenceRunner._save_image(
-                        config, game, commander_img, traj_steps_taken)
+                        config, "commander", game, commander_img, traj_steps_taken)
                     driver_img_name = InferenceRunner._save_image(
-                        config, game, driver_img, traj_steps_taken)
+                        config, "driver", game, driver_img, traj_steps_taken)
 
                     # Get next commander action
-                    commander_action, obj_cls, commander_utterance = model.get_next_action_commander(
-                        commander_img, game, prev_action, commander_img_name, instance_file)
+                    commander_inputs = dict(
+                        driver_img=driver_img,
+                        driver_position=driver_pose,
+                        commander_img=commander_img,
+                        commander_curr_pose=commander_pose,
+                        commander_action_history=commander_action_history,
+                        commander_pose_history=commander_pose_history,
+                        driver_action_history=driver_action_history,
+                        driver_pose_history=driver_pose_history,
+                        driver_obs_history=None,
+                        dialogue_history=dialogue_history,
+                        commander_action_result_history=commander_action_result_history
+                    )
+                    commander_action = model.get_next_action_commander(commander_inputs, game, commander_img_name, instance_file)
 
                     # Get next driver action
-                    driver_action, obj_relative_coord, driver_utterance = model.get_next_action_driver(
-                        driver_img, game, prev_action, driver_img_name, instance_file)
+                    driver_inputs = dict(
+                        driver_img=driver_img,
+                        driver_curr_pose=driver_pose,
+                        dialogue_history=dialogue_history,
+                        driver_action_history=driver_action_history,
+                        driver_pose_history=driver_pose_history,
+                        driver_obs_history=None
+                    )
+                    driver_action = model.get_next_action_driver(driver_inputs, game, driver_img_name, instance_file)
 
                     # Execute actions in simulator
                     commander_step_success, result = InferenceRunner._execute_commander_action(
-                        er.simulator, commander_action, obj_cls, commander_utterance)
+                        er.simulator, **commander_action)
 
-                    if commander_action == "OpenProgressCheck":
-                        model.pc_result = result
+                    # Save progress check result if commander executes a PC action
+                    if commander_action['action'] == "OpenProgressCheck":
+                        commander_action_result_history.append(result)
 
                     driver_step_success = InferenceRunner._execute_driver_action(
-                        er.simulator, driver_action, obj_relative_coord, driver_utterance)
+                        er.simulator, **driver_action)
 
-                    InferenceRunner._update_metrics(metrics, commander_action,
-                                                    obj_cls, driver_action,
-                                                    obj_relative_coord,
+                    InferenceRunner._update_metrics(metrics, 
+                                                    commander_action,
+                                                    driver_action,
                                                     commander_step_success,
                                                     driver_step_success)
-                    prev_action = {
-                        "commander_action": commander_action,
-                        "driver_action": driver_action,
-                        "obj_cls": str(obj_cls),
-                        "obj_relative_coord": str(obj_relative_coord),
-                        "commander_utterance": commander_utterance,
-                        "driver_utterance": driver_utterance,
-                    }
-                    pred_actions.append(prev_action)
+
+                    driver_action_history.append(driver_action)
+                    commander_action_history.append(commander_action)
+                    driver_pose_history.append(driver_pose)
+                    commander_pose_history.append(commander_pose)
+
+                    pred_actions.append([commander_action, driver_action])
+
+                    if commander_action['utterance'] and driver_action['utterance']:
+                        import ipdb; ipdb.set_trace()
+                    
+                    if commander_action['utterance']:
+                        dialogue_history.append((commander_action['utterance'], "commander"))
+
+                    if driver_action['utterance']:
+                        dialogue_history.append((driver_action['utterance'], "driver"))
+
                 except Exception as e:
                     logger.error(
                         f"_run_game Exception: {str(e)} for instance_id={instance_id}, "
@@ -269,14 +304,12 @@ class InferenceRunner:
         metrics.update(metrics_diff)
 
         os.makedirs(config.output_dir, exist_ok=True)
-        pred_actions_file = os.path.join(
-            config.output_dir, "pred_actions__" + instance_id + ".json")
+        pred_actions_file = os.path.join(config.output_dir, "pred_actions__" + instance_id + ".json")
         with open(pred_actions_file, "w") as handle:
             json.dump(pred_actions, handle)
 
         er.simulator.dir_out = config.output_dir
-        output_file = os.path.join(config.output_dir,
-                                   "inference__" + instance_id + ".json")
+        output_file = os.path.join(config.output_dir,"inference__" + instance_id + ".json")
         er.simulator.save(file_name=output_file)
 
         return instance_id, metrics
@@ -341,8 +374,7 @@ class InferenceRunner:
             simulator.keyboard(agent_id=0, utterance=utterance)
         else:
             step_success, _, _ = simulator.apply_motion(motion_name = action, agent_id=0)
-        # else:
-        #     pass
+                
         return step_success, r
 
     @staticmethod
@@ -380,13 +412,11 @@ class InferenceRunner:
         return f"{metrics_file}.json.{process_index}"
 
     @staticmethod
-    def _update_metrics(metrics, commander_action, obj_cls, driver_action,
-                        obj_relative_coord, commander_step_success,
-                        driver_step_success):
-        metrics["pred_actions"].append(
-            (commander_action, obj_cls, driver_action, obj_relative_coord))
+    def _update_metrics(metrics, commander_action, driver_action,
+                        commander_step_success, driver_step_success):
+        metrics["pred_actions"].append((commander_action, driver_action))
 
-        if driver_action == "Stop":
+        if driver_action['action'] == "Stop":
             metrics["predicted_stop"] = 1
 
         if not commander_step_success or not driver_step_success:
@@ -418,8 +448,8 @@ class InferenceRunner:
             process.join()
 
     @staticmethod
-    def _save_image(config, game, img, traj_steps_taken):
-        image_name = f"img__{game['instance_id']}_{traj_steps_taken}.jpeg"
+    def _save_image(config, agent, game, img, traj_steps_taken):
+        image_name = f"{agent}_img__{game['instance_id']}_{traj_steps_taken}.jpeg"
         if config.use_img_file:
             InferenceRunner._save_image_sync(img, image_name, config)
         else:

@@ -30,7 +30,10 @@ class Module(Base):
         self.subgoal_monitoring = (self.args.progress_aux_loss_wt > 0
                                    or self.args.subgoal_aux_loss_wt > 0)
 
-        decoder = vnn.ConvFrameDecoderProgressMonitor if self.subgoal_monitoring else vnn.ConvFrameDecoder
+        if self.subgoal_monitoring:
+            decoder = vnn.ConvFrameCoordDecoderProgressMonitor
+        else:
+            decoder = vnn.ConvFrameDecoder
 
         if self.args.agent == "driver":
             self.aux_pred_type = "coord"
@@ -75,7 +78,7 @@ class Module(Base):
         self.reset()
 
         self.embs_ann = embs_ann
-
+        
     def featurize(self, batch, load_frames=True):
         '''
         tensorize and pad batch input
@@ -132,7 +135,7 @@ class Module(Base):
                 # agents are not given the goal instruction
                 # dialogue_hist.append(combined_utts_to_t)
             
-                feat['lang_goal_instr'].append(combined_utts_to_t)
+                feat['dialogue_hist'].append(combined_utts_to_t)
 
             feat['seq_lens'].append(seq_len)    
             # if seq_len > 500:
@@ -190,7 +193,7 @@ class Module(Base):
         
         # tensorization and padding
         for k, v in feat.items():
-            if k in {'lang_goal_instr'}:
+            if k in {'dialogue_hist'}:
                 # language embedding and padding
                 seqs = [torch.tensor(vv, device=device) for vv in v]
                 pad_seq = pad_sequence(seqs,
@@ -254,38 +257,45 @@ class Module(Base):
 
     def encode_lang(self, feat):
         '''
-        encode goal + instr language
+        encode dialogue history
         '''
-        emb_lang_goal_instr = feat['lang_goal_instr']
-        self.lang_dropout(emb_lang_goal_instr.data)
+        emb_dialogue_hist = feat['dialogue_hist']
+        if not self.test_mode:
+            self.lang_dropout(emb_dialogue_hist.data)
+        else:
+            self.lang_dropout(emb_dialogue_hist)
 
-        enc_lang_goal_instr, _ = self.enc(emb_lang_goal_instr)
+        enc_dialogue_hist, _ = self.enc(emb_dialogue_hist)
 
         if not self.test_mode:
-            enc_lang_goal_instr, _ = pad_packed_sequence(enc_lang_goal_instr,
-                                                         batch_first=True)
+            enc_dialogue_hist, _ = pad_packed_sequence(enc_dialogue_hist,
+                                                            batch_first=True)
 
-        self.lang_dropout(enc_lang_goal_instr)
-        cont_lang_goal_instr = self.enc_att(enc_lang_goal_instr)
+        self.lang_dropout(enc_dialogue_hist)
+        cont_dialogue_hist = self.enc_att(enc_dialogue_hist)
 
-        seq_len = feat['seq_lens']
-        bs = seq_len.shape[0]
-        max_seq_len = max(seq_len)
-        cum_sum = torch.cumsum(seq_len, dim=0)
-        _, max_diag_len, h_dim = enc_lang_goal_instr.shape
-        device = enc_lang_goal_instr.device 
-        
         if not self.test_mode:
-            cont_lang_goal_instr_out = torch.zeros((bs, max_seq_len, h_dim), device=device)
-            enc_lang_goal_instr_out = torch.zeros((bs, max_seq_len, max_diag_len, h_dim), device=device)
+            seq_len = feat['seq_lens']
+            bs = seq_len.shape[0]
+            max_seq_len = max(seq_len)
+            cum_sum = torch.cumsum(seq_len, dim=0)
+            _, max_diag_len, h_dim = enc_dialogue_hist.shape
+            device = enc_dialogue_hist.device 
+
+            cont_dialogue_hist_out = torch.zeros((bs, max_seq_len, h_dim), device=device)
+            enc_dialogue_hist_out = torch.zeros((bs, max_seq_len, max_diag_len, h_dim), device=device)
             start = 0
             
             for i in range(bs):
                 end = cum_sum[i]
-                cont_lang_goal_instr_out[i, :seq_len[i]] = cont_lang_goal_instr[start:end]
-                enc_lang_goal_instr_out[i, :seq_len[i]] = enc_lang_goal_instr[start:end]
+                cont_dialogue_hist_out[i, :seq_len[i]] = cont_dialogue_hist[start:end]
+                enc_dialogue_hist_out[i, :seq_len[i]] = enc_dialogue_hist[start:end]
                 start = end  
-        return cont_lang_goal_instr_out, enc_lang_goal_instr_out
+        else:
+            cont_dialogue_hist_out = cont_dialogue_hist
+            enc_dialogue_hist_out = enc_dialogue_hist
+
+        return cont_dialogue_hist_out, enc_dialogue_hist_out
 
     def reset(self):
         '''
@@ -319,9 +329,9 @@ class Module(Base):
         e_t = {}
         if prev_action is not None:
             if agent == "commander":
-                e_t["commander"] = self.embed_action([prev_action["commander_action"]], agent="commander").squeeze(0)
+                e_t["commander"] = self.embed_action([prev_action], agent="commander").squeeze(0)
             if agent == "driver":
-                e_t["driver"] = self.embed_action([prev_action["driver_action"]], agent="driver").squeeze(0)
+                e_t["driver"] = self.embed_action([prev_action], agent="driver").squeeze(0)
         else:
             e_t["commander"] = e_t["driver"] = self.r_state['e_t']
         

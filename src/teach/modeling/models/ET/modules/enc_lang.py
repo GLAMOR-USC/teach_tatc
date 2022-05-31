@@ -1,5 +1,5 @@
 import torch
-from alfred.nn.encodings import InstrLangEncoding, PosLangEncoding
+from .encodings import InstrLangEncoding, PosLangEncoding
 from torch import nn
 
 
@@ -9,15 +9,15 @@ class EncoderLang(nn.Module):
         num_layers,
         args,
         embs_ann,
-        subgoal_token="<<instr>>",
-        goal_token="<<goal>>",
+        # subgoal_token="<<instr>>",
+        # goal_token="<<goal>>",
     ):
         """
         transformer encoder for language inputs
         """
         super(EncoderLang, self).__init__()
-        self.subgoal_token = subgoal_token
-        self.goal_token = goal_token
+        # self.subgoal_token = subgoal_token
+        # self.goal_token = goal_token
 
         # transofmer layers
         encoder_layer = nn.TransformerEncoderLayer(
@@ -53,8 +53,11 @@ class EncoderLang(nn.Module):
         mask_pad = lang_pad == pad
         emb_lang = embedder(lang_pad)
         # add positional encodings
+        # mask_token = EncoderLang.mask_token(
+        #     lang_pad, vocab, {self.subgoal_token, self.goal_token})
         mask_token = EncoderLang.mask_token(
-            lang_pad, vocab, {self.subgoal_token, self.goal_token})
+            lang_pad, vocab, {})
+
         emb_lang = self.encode_inputs(emb_lang, mask_token, mask_pad)
         # pass the inputs through the encoder
         hiddens = EncoderLang.encoder(self.enc_transformers, emb_lang,

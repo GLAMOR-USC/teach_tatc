@@ -123,7 +123,7 @@ class Seq2SeqModel(TeachModel):
 
         # Setup input for tatc instance and process the goal instruction
         # We don't need to process the goal instruction
-        # self.input_dict = {}
+        self.input_dict = {}
         # tatc_instance = self.preprocessor.process_goal_instr(
         #     tatc_instance, is_test_split=True)
         # lang_goal = torch.tensor(tatc_instance["lang_goal"],
@@ -134,11 +134,11 @@ class Seq2SeqModel(TeachModel):
         # self.input_dict["lang_goal_instr"] = lang_goal
         return True
 
-    def extract_progress_check_subtask_string(self, task=None):
-        if self.pc_result["success"]:
+    def extract_progress_check_subtask_string(self, pc_result, task=None):
+        if pc_result["success"]:
             return ""
         
-        for subgoal in self.pc_result["subgoals"]:
+        for subgoal in pc_result["subgoals"]:
             if subgoal["success"] == 1:
                 continue 
             
@@ -153,34 +153,56 @@ class Seq2SeqModel(TeachModel):
                     return step["desc"]
     
         return task
+    
+    def featurize_sent(self, sent, agent):
+        processed_diag = self.preprocessor.process_sentences([sent])[0]
+        processed_diag_toks = self.preprocessor.numericalize(self.vocab["word"],
+                            processed_diag,
+                            train=False)
+        
+        agent_tok = self.preprocessor.commander_tok if agent == "commander" else self.preprocessor.driver_tok
+        processed_diag_toks = [agent_tok] + processed_diag_toks + [self.preprocessor.eos_tok]
+        
+        sent_emb = self.commander_model.emb_word(torch.Tensor(processed_diag_toks).to(self.args.device).long())
+        return sent_emb
+
+    def featurize_dialogue(self, dialogue):
+        dialogue_emb = None
+
+        for i, (sent, agent) in enumerate(dialogue):
+            sent_emb = self.featurize_sent(sent, agent)
+
+            if dialogue_emb is None:
+                dialogue_emb = sent_emb 
+            else:
+                dialogue_emb = torch.cat([dialogue_emb, sent_emb], dim=0)
+
+        # add a batch dimension
+        return dialogue_emb.unsqueeze(0)
 
     def get_next_action_commander(self,
-                                  commander_img,
+                                  commander_inputs,
                                   tatc_instance,
-                                  prev_action,
                                   commander_img_name=None,
                                   tatc_name=None):
         """
         Returns a commander action
-        :param commander_img: PIL Image containing commander's egocentric image
-        :param driver_img: PIL Image containing driver's egocentric image
+        :param commander_inputs: dictionary 
         :param tatc_instance: tatc instance
-        :param prev_action: One of None or a dict with keys 'commander_action', 'obj_cls', 'driver_action', and 'obj_relative_coord' 
-        containing returned values from a previous call of get_next_action
         :param commander_img_name: commander image file name
-        :param driver_img_name: driver image file name
         :param tatc_name: tatc instance file name
-        :return action: An action name from commander actions
-        :return obj_cls: Object class for search object or select oid action
         """
-        # Note: this model doesn't use the targetframe for object and mask,
-        # but this data can be accessible through tatc_instance
-
         # Featurize images
-        commander_img_feat = self.extractor.featurize([commander_img], batch=1)
+        commander_img_feat = self.extractor.featurize([commander_inputs['commander_img']], batch=1)
 
         self.input_dict["commander_frames"] = commander_img_feat.unsqueeze(0)
 
+        # Featurize the dialogue history
+        self.input_dict['dialogue_hist'] = self.featurize_dialogue(commander_inputs["dialogue_history"])
+
+        prev_action = None if len(commander_inputs['commander_action_history']) == 0 else commander_inputs['commander_action_history'][-1]['action']
+
+        import ipdb; ipdb.set_trace()
         with torch.no_grad():
             m_out = self.commander_model.step(
                 self.input_dict,
@@ -198,29 +220,34 @@ class Seq2SeqModel(TeachModel):
 
         action, obj_cls = m_pred["action"], m_pred["obj_cls"]
 
-        # if prev_action==None or (prev_action!=None and prev_action['commander_action']==action):
-        #     action = 'OpenProgressCheck'
+        # Simple logic to force Commander to check progress and produce utterance
+        if not prev_action or (prev_action != None and prev_action == action):
+            print('Forcing progress check!')
+            action = 'OpenProgressCheck'
 
-        # Simple commander speaker
-        # This can also generated from a text generation language model
+        if prev_action == "OpenProgressCheck":
+            action = "Text"
 
-        text = None
+        # Simple commander speaker that uses the text from progress check output
+        utterance = None
         if action == "Text":
-            if self.pc_result != None and prev_action!=None:
-                latest_instr = self.extract_progress_check_subtask_string(task = tatc_instance['tasks'][0]['desc'])
-            else:
-                latest_instr =  tatc_instance['tasks'][0]['desc']
-            if len(latest_instr)>0:
-                text = latest_instr
-                latest_instr = ["<<commander>>"] + self.preprocessor.process_sentences([latest_instr])[0] + ["<<sent>>"]
-                latest_instr = [self.preprocessor.numericalize(self.vocab["word"],
-                                latest_instr,
-                                train=False)
-                            ]
-                latest_instr = torch.tensor(latest_instr, dtype=torch.long).to(self.args.device)
-                latest_instr = self.commander_model.emb_word(latest_instr)
                 
-                self.input_dict["lang_goal_instr"] = torch.cat([self.input_dict["lang_goal_instr"], latest_instr], dim=1)
+            # Get pc results
+            pc_results = commander_inputs['commander_action_result_history'][-1]
+
+            task_desc = tatc_instance['tasks'][0]['desc']
+            next_instr = self.extract_progress_check_subtask_string(pc_results, task=tatc_instance['tasks'][0]['desc'])
+
+
+            # Check if goal already provided 
+            goal_provided = False 
+            for sent, _ in commander_inputs['dialogue_history']:
+                if task_desc == sent:
+                    goal_provided = True 
+
+            instr = task_desc if not goal_provided else next_instr
+            utterance = instr
+            # utterance = self.featurize_sent(instr, "commander")                
             
         # Assume previous action succeeded if no better info available
         prev_success = True
@@ -228,34 +255,40 @@ class Seq2SeqModel(TeachModel):
             prev_success = prev_action["success"]
 
         logger.debug("Predicted Commander action: %s, obj = %s, utterance = %s" %
-                     (str(action), str(obj_cls), text))
-        return action, obj_cls, text
+                     (str(action), str(obj_cls), utterance))
+
+        action_dict = dict(
+            action=action,
+            obj_cls=obj_cls,
+            utterance=utterance
+        )
+        return action_dict
 
     def get_next_action_driver(self,
-                               driver_img,
+                               driver_inputs,
                                tatc_instance,
                                prev_action,
                                driver_img_name=None,
                                tatc_name=None):
         """
-        Returns a driver action
-        :param commander_img: PIL Image containing commander's egocentric image
-        :param driver_img: PIL Image containing driver's egocentric image
+        Returns a commander action
+        :param driver_inputs: dictionary 
         :param tatc_instance: tatc instance
-        :param prev_action: One of None or a dict with keys 'commander_action', 'obj_cls', 'driver_action', and 'obj_relative_coord' 
-        containing returned values from a previous call of get_next_action
         :param commander_img_name: commander image file name
-        :param driver_img_name: driver image file name
         :param tatc_name: tatc instance file name
-        :return action: An action name from all_agent_actions
-        :return obj_relative_coord: A relative (x, y) coordinate (values between 0 and 1) indicating an object in the image;
-        The TEACh wrapper on AI2-THOR examines the ground truth segmentation mask of the agent's egocentric image, selects
-        an object in a 10x10 pixel patch around the pixel indicated by the coordinate if the desired action can be
-        performed on it, and executes the action in AI2-THOR.
         """
-        driver_img_feat = self.extractor.featurize([driver_img], batch=1)
+        driver_img_feat = self.extractor.featurize([driver_inputs['driver_img']], batch=1)
         self.input_dict["driver_frames"] = driver_img_feat.unsqueeze(0)
 
+        # Featurize the dialogue history
+        if not driver_inputs["dialogue_history"]:
+            driver_inputs["dialogue_history"] = [("", "driver")]
+        
+        self.input_dict['dialogue_hist'] = self.featurize_dialogue(driver_inputs["dialogue_history"])
+
+        prev_action = None if len(driver_inputs['driver_action_history']) == 0 else driver_inputs['driver_action_history'][-1]['action']
+
+        import ipdb; ipdb.set_trace()
         with torch.no_grad():
             m_out = self.driver_model.step(self.input_dict,
                                            self.vocab,
@@ -269,10 +302,10 @@ class Seq2SeqModel(TeachModel):
             clean_special_tokens=False,
             agent="driver")[0]
 
-        action, predicted_click = m_pred["action"], m_pred['coord']
+        action, obj_relative_coord = m_pred["action"], m_pred['coord']
 
         if not action in obj_interaction_actions:
-            predicted_click = None
+            obj_relative_coord = None
 
         # if prev_action!=None and prev_action['driver_action']==action:
         #     # choosing random navigation action
@@ -280,8 +313,9 @@ class Seq2SeqModel(TeachModel):
        
         # Simple driver speaker
         # This can also generated from a text generation language model
-        text = None
+        utterance = None
         if action == "Text":
+            import ipdb; ipdb.set_trace()
             text = "What should I do next" 
             utterance = text
             utterance = ["<<driver>>"] + self.preprocessor.process_sentences([utterance])[0] + ["<<sent>>"]
@@ -300,15 +334,19 @@ class Seq2SeqModel(TeachModel):
             prev_success = prev_action["success"]
 
         logger.debug("Predicted Driver action: %s, click = %s, utterance = %s" %
-                     (str(action), str(predicted_click), text))
+                     (str(action), str(obj_relative_coord), utterance))
 
         # remove blocking actions
         action = self.obstruction_detection(action, prev_success, m_out,
                                             self.driver_model.vocab_out)
 
-        
+        action_dict = dict(
+            action=action,
+            obj_relative_coord=obj_relative_coord,
+            utterance=utterance
+        )
 
-        return action, predicted_click, text
+        return action_dict
 
     def get_obj_click(self, obj_class_idx, img):
         rcnn_pred = self.object_predictor.predict_objects(img)

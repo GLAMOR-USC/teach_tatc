@@ -200,16 +200,15 @@ def tensorize_and_pad(batch, device, pad):
     traj_data, feat_list = list(zip(*batch))
     for key in feat_list[0].keys():
         feat_dict[key] = [el[key] for el in feat_list]
-
+    
     # feat_dict keys that start with these substrings will be assigned to input_dict
-    input_keys = {"commander_utterances", "driver_utterances", "frames"}
+    input_keys = {"commander_lang", "driver_lang", "frames", "combined_lang"}
     # the rest of the keys will be assigned to gt_dict
 
     for k, v in feat_dict.items():
         dict_assign = input_dict if any([k.startswith(s)
                                          for s in input_keys]) else gt_dict
-        if k.startswith("commander_utterances") or k.startswith(
-                "driver_utterances"):
+        if k.endswith("_lang"):
             # no preprocessing should be done here
             seqs = [
                 torch.tensor(vv if vv is not None else [pad, pad],

@@ -46,7 +46,7 @@ class BaseDataset(TorchDataset):
         self.vocab = vocab
         self.vocab_in = vocab["word"]
 
-        if args.model in ["transformer", "seq2seq_attn"]:
+        if args.model in ["transformer", "seq2seq_attn", "ET"]:
             driver_out_type = "driver_action_low"
         else:
             driver_out_type = "driver_action_high"

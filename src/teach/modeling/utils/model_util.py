@@ -283,17 +283,18 @@ def process_prediction(action, aux_action_output, pad, vocab_action,
     """
 
     # remove padding tokens
-    if pad in action:
-        pad_start_idx = action.index(pad)
-        action = action[:pad_start_idx]
-        aux_action_output = aux_action_output[:pad_start_idx]
-    if clean_special_tokens:
-        # remove <<stop>> tokens
-        stop_token = vocab_action.word2index("Stop")
-        if stop_token in action:
-            stop_start_idx = action.index(stop_token)
-            action = action[:stop_start_idx]
-            aux_action_output = aux_action_output[:stop_start_idx]
+    # if pad in action:
+    #     pad_start_idx = action.index(pad)
+    #     action = action[:pad_start_idx]
+    #     aux_action_output = aux_action_output[:pad_start_idx]
+
+    # if clean_special_tokens:
+    #     # remove <<stop>> tokens
+    #     stop_token = vocab_action.word2index("Stop")
+    #     if stop_token in action:
+    #         stop_start_idx = action.index(stop_token)
+    #         action = action[:stop_start_idx]
+    #         aux_action_output = aux_action_output[:stop_start_idx]
     
     # index to API actions
     words = vocab_action.index2word(action)
@@ -317,9 +318,12 @@ def extract_action_preds(model_out,
         zipped_data = zip(model_out["out_action_low"].max(2)[1].tolist(),
                       model_out[f"out_action_{out_key}"].max(2)[1].tolist())
     else:
-        out_key = "coord"
-        zipped_data = zip(model_out["out_action_low"].max(2)[1].tolist(),
-                      model_out[f"out_action_{out_key}"][0].tolist())
+        # out_key = "coord"
+        # zipped_data = zip(model_out["out_action_low"].max(2)[1].tolist(),
+        #               model_out[f"out_action_{out_key}"][0].tolist())
+        out_key = "object"
+        zipped_data = zip(model_out["action"].max(2)[1].tolist(),
+                      model_out[f"object"][0].tolist())
 
     # predict_object = not lang_only
     preds_list = [

@@ -95,6 +95,91 @@ class ResnetVisualEncoder(nn.Module):
 
 #         return x
 
+class ConvFrameDecoderCommander(ConvFrameDecoder):
+    def __init__(*args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Driver image, commander image, driver action, commander action
+        self.cell = nn.LSTMCell(dhid + dframe*2 + demb*2, dhid)
+        self.aux_pred = nn.Linear(dhid + dhid + dframe*2 + demb*2, self.aux_output_size)
+        self.emb_driver = nn.Embedding(len(self.vocab["driver_action_low"]), args.demb)
+        self.emb_commander = nn.Embedding(len(self.vocab["commander_action_low"]), args.demb)
+
+    def step(self, inputs, t):
+        # previous decoder hidden state
+        state_tm1 = inputs['state_t']
+        h_tm1 = state_tm1[0]
+
+        # encode visual features
+        driver_frame = inputs['driver_frames'][:, t]
+        commander_frame = inputs['commander_frames'][:, t]
+
+        # encoder dialogue history
+        lang_feat_t = inputs['enc'][:, t]
+
+        driver_vis_feat_t = self.vis_encoder(driver_frame)
+        commander_vis_feat_t = self.vis_encoder(commander_frame)
+
+        # attend over language
+        weighted_lang_t, lang_attn_t = self.attn(self.attn_dropout(lang_feat_t), self.h_tm1_fc(h_tm1))
+
+        # concat visual feats, weight lang, and previous action embedding
+        inp_t = torch.cat([commander_vis_feat_t, driver_vis_feat_t, weighted_lang_t, commander_e_t, driver_e_t], dim=1)
+        inp_t = self.input_dropout(inp_t)
+
+        # update hidden state
+        state_t = self.cell(inp_t, state_tm1)
+        state_t = [self.hstate_dropout(x) for x in state_t]
+        h_t = state_t[0]
+
+        # decode action and mask
+        cont_t = torch.cat([h_t, inp_t], dim=1)
+        action_emb_t = self.actor(self.actor_dropout(cont_t))
+        action_t = action_emb_t.mm(self.emb.weight.t())
+        aux_t = self.aux_pred(cont_t)
+
+        return action_t, aux_t, state_t, lang_attn_t
+
+    def forward(self, inputs, max_decode=150):
+        max_t = inputs['gold'].size(1)
+        batch = inputs['enc'].size(0)
+        driver_e_t = self.go.repeat(batch, 1)
+        commander_e_t = self.go.repeat(batch, 1)
+        state_t = inputs['state_0']
+        inputs['state_t'] = state_t
+
+        actions = []
+        attn_scores = []
+        aux_output = []
+
+        for t in range(max_t):
+            action_t, aux_t, state_t, attn_score_t = self.step(inputs, t)
+            actions.append(action_t)
+            attn_scores.append(attn_score_t)
+            aux_output.append(aux_t)
+            import ipdb; ipdb.set_trace()
+            if self.teacher_forcing and self.training:
+                # TODO: fix this
+                w_t = inputs['gold'][:, t]
+            else:
+                w_t = action_t.max(1)[1]
+
+            # update action embedding 
+            inputs['commander_e_t'] = self.emb_commander(commander_w_t)
+            inputs['driver_e_t'] = self.emb_driver(driver_w_t)
+
+            inputs['state_t'] = state_t
+
+        results = {
+            'out_action_low': torch.stack(actions, dim=1),
+            f'out_action_low_{self.aux_pred_type}': torch.stack(aux_output,
+                                                                dim=1),
+            'out_attn_scores': torch.stack(attn_scores, dim=1),
+            'state_t': state_t,
+            'out_text': ""
+        }
+        return results
+
 
 class ConvFrameDecoder(nn.Module):
     '''
@@ -126,20 +211,23 @@ class ConvFrameDecoder(nn.Module):
         self.go = nn.Parameter(torch.Tensor(demb))
         self.actor = nn.Linear(dhid + dhid + dframe + demb, demb)
         self.aux_pred_type = pred
-        aux_output_size = 2 if pred == "coord" else num_obj_classes
-        self.aux_pred = nn.Linear(dhid + dhid + dframe + demb, aux_output_size)
+        self.aux_output_size = 2 if pred == "coord" else num_obj_classes
+        self.aux_pred = nn.Linear(dhid + dhid + dframe + demb, self.aux_output_size)
         self.teacher_forcing = teacher_forcing
         self.h_tm1_fc = nn.Linear(dhid, dhid)
 
         nn.init.uniform_(self.go, -0.1, 0.1)
 
-    def step(self, enc, frame, e_t, state_tm1):
+    def step(self, inputs, t):
         # previous decoder hidden state
+        state_tm1 = inputs['state_t']
         h_tm1 = state_tm1[0]
 
         # encode vision and lang feat
+        frame = inputs['frames'][:, t]
+        lang_feat_t = inputs['enc'][:, t]
+
         vis_feat_t = self.vis_encoder(frame)
-        lang_feat_t = enc  # language is encoded once at the start
 
         # attend over language
         weighted_lang_t, lang_attn_t = self.attn(
@@ -162,25 +250,30 @@ class ConvFrameDecoder(nn.Module):
 
         return action_t, aux_t, state_t, lang_attn_t
 
-    def forward(self, enc, frames, gold=None, max_decode=150, state_0=None):
-        max_t = gold.size(1)
-        batch = enc.size(0)
+    def forward(self, inputs, max_decode=150):
+        max_t = inputs['gold'].size(1)
+        batch = inputs['enc'].size(0)
         e_t = self.go.repeat(batch, 1)
-        state_t = state_0
+        state_t = inputs['state_0']
+        inputs['state_t'] = state_t
 
         actions = []
         attn_scores = []
         aux_output = []
+
         for t in range(max_t):
-            action_t, aux_t, state_t, attn_score_t = self.step(enc[:, t], frames[:, t], e_t, state_t)
+            action_t, aux_t, state_t, attn_score_t = self.step(inputs, t)
             actions.append(action_t)
             attn_scores.append(attn_score_t)
             aux_output.append(aux_t)
             if self.teacher_forcing and self.training:
-                w_t = gold[:, t]
+                w_t = inputs['gold'][:, t]
             else:
                 w_t = action_t.max(1)[1]
-            e_t = self.emb(w_t)
+
+            # update action embedding 
+            inputs['e_t'] = self.emb(w_t)
+            inputs['state_t'] = state_t
 
         results = {
             'out_action_low': torch.stack(actions, dim=1),

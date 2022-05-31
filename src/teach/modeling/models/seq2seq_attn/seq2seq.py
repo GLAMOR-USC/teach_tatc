@@ -52,36 +52,6 @@ class Module(nn.Module):
         # summary self.writer
         self.summary_writer = None
 
-    def random_test(self, loaders_train, epoch, optimizer, args=None, name='train', iteration=0):
-        logger.info("Epoch {}/{}".format(epoch, args.epochs))
-        self.train()
-        
-        train_iterators = {
-            key: iter(loader)
-            for key, loader in loaders_train.items()
-        }
-
-        p_train = {}
-        m_train = collections.defaultdict(list)
-        total_train_loss = list()
-        train_iter = iteration
-
-        epoch_length = len(next(iter(loaders_train.values())))
-
-        for _ in tqdm(range(epoch_length), desc="train"):
-            # sample batches
-            batches = data_util.sample_batches(train_iterators,
-                                                self.args.device, self.pad,
-                                                self.args)
-
-            # iterate over batches
-            for batch_name, (traj_data, input_dict,
-                                gt_dict) in batches.items():
-                feat = self.featurize(traj_data)
-                
-                del feat
-            del batches
-    
     def run_train(self, loaders, info, args=None, optimizer=None):
         '''
         training loop

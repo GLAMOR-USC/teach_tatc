@@ -56,7 +56,7 @@ class TATCDataset(BaseDataset):
         feat = dict()
 
         # language inputs
-        feat["commander_lang"], feat["driver_lang"] = TATCDataset.load_lang(
+        feat["commander_lang"], feat["driver_lang"], feat["combined_lang"] = TATCDataset.load_lang(
             task_json)
 
         # action outputs
@@ -76,8 +76,7 @@ class TATCDataset(BaseDataset):
         """
         load numericalized language from task_json
         """
-        return sum(task_json["commander_utterances"],
-                   []), sum(task_json["driver_utterances"], [])
+        return sum(task_json["commander_utterances"], []), sum(task_json["driver_utterances"], []), sum(task_json["combined_utterances"], [])
 
     @staticmethod
     def load_action(task_json,
