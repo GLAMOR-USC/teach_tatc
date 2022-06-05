@@ -1,0 +1,31 @@
+#!/bin/bash 
+#SBATCH --job-name=train_et
+#SBATCH --partition=debug
+#SBATCH --nodes=1
+#SBATCH --time=10:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --gpus-per-node=1
+#SBATCH --nodelist=ink-titan
+
+HOME=/home/anthony/teach_tatc
+DATA=/home/anthony/teach_data
+EXP_DIR=/home/anthony/teach_tatc/experiments/
+
+# conda activate teach
+cd /home/anthony/teach_tatc
+source setup.sh
+export preprocessed_path=/home/anthony/teach_data/tatc_dataset_full_2
+export agent=driver
+
+CUDA_VISIBLE_DEVICES=0 python3.8 -m modeling.train \
+    with exp.model=ET \
+    exp.name=et_${agent}_w_object \
+    exp.data.train=${preprocessed_path} \
+    exp.agent=${agent} \
+    exp.num_workers=10 \
+    exp.lmdb_max_readers=1 \
+    exp.use_wandb=True \
+    et.epochs=100 \
+    et.batch=1 \
+    et.seed=0 \
+    et.resume=False >> ${EXP_DIR}/stdout.txt 2>> ${EXP_DIR}/stderr.txt

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: MIT-0
 
 all_agent_actions = [
+    "<<pad>>",
+    "NoOp",
     "Stop",
     "Forward",
     "Backward",

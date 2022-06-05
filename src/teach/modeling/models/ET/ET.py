@@ -4,6 +4,7 @@ import logging
 import os
 from importlib import import_module
 
+import wandb
 import gtimer as gt
 from modeling.utils import data_util, model_util
 from tensorboardX import SummaryWriter
@@ -15,7 +16,6 @@ from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_se
 from teach.logger import create_logger
 
 logger = create_logger(__name__, level=logging.INFO)
-
 
 class Module(nn.Module):
     def __init__(self, args, embs_ann, vocab, for_inference=False):
@@ -31,10 +31,19 @@ class Module(nn.Module):
         self.pad, self.seg = 0, 1
         # summary self.writer
         self.summary_writer = None
+        
         # create the model to be trained
         ModelClass = import_module("modeling.models.{}.{}".format(args.model, "transformer")).Model
         self.model = ModelClass(args, embs_ann, self.vocab_out, self.pad, self.seg, for_inference)
         self.for_inference = for_inference
+
+        if self.args.use_wandb:
+            wandb.init(
+                project="teach_et_baseline", 
+                config=self.args,
+                name=self.args.name,
+                dir=self.args.dout
+            )
 
     def run_train(self, loaders, info, optimizer=None):
         """
@@ -73,8 +82,10 @@ class Module(nn.Module):
         )
 
         # display dout
+        start_epoch = info['progress'] if self.args.resume else 0 
+
         logger.info("Saving to: %s" % self.args.dout)
-        for epoch in range(info["progress"], self.args.epochs):
+        for epoch in range(start_epoch, self.args.epochs):
             logger.info("Epoch {}/{}".format(epoch, self.args.epochs))
             self.train()
             train_iterators = {key: iter(loader) for key, loader in loaders_train.items()}
@@ -154,7 +165,11 @@ class Module(nn.Module):
                             loader_id.replace(":", "/").replace("lmdb/", "").replace(";lang", "").replace(";", "_"),
                             stat_key.replace(":", "/").replace("lmdb/", ""),
                         )
+
+                        if self.args.use_wandb:
+                            wandb.log({summary_key: stat_value}, step=info["iters"]["train"])
                         self.summary_writer.add_scalar(summary_key, stat_value, info["iters"]["train"])
+
             # dump the training info
             model_util.save_log(
                 self.args.dout,
@@ -168,3 +183,6 @@ class Module(nn.Module):
         logger.info(
             "{} epochs are completed, all the models were saved to: {}".format(self.args.epochs, self.args.dout)
         )
+
+        if self.args.use_wandb:
+            wandb.finish()  

@@ -196,8 +196,8 @@ class Preprocessor(object):
         # Action at each timestep is a tuple of (Commander Action, Driver Action)
         traj["actions_low"] = list()
 
-        idx_to_action_json = "meta_data_files/ai2thor_resources/action_idx_to_action_name.json"
-        action_to_idx_json = "meta_data_files/ai2thor_resources/action_to_action_idx.json"
+        idx_to_action_json = "teach/meta_data_files/ai2thor_resources/action_idx_to_action_name.json"
+        action_to_idx_json = "teach/meta_data_files/ai2thor_resources/action_to_action_idx.json"
 
         with open(os.path.join(constants.TEACH_SRC, idx_to_action_json)) as f:
             idx_to_action_name = json.load(f)

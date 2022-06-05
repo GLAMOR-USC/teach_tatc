@@ -240,22 +240,21 @@ class InferenceRunner:
                     driver_action = model.get_next_action_driver(driver_inputs, game, driver_img_name, instance_file)
 
                     # Execute actions in simulator
-                    commander_step_success, result = InferenceRunner._execute_commander_action(
-                        er.simulator, **commander_action)
+                    commander_step_success, result = InferenceRunner._execute_commander_action(er.simulator, **commander_action)
 
                     # Save progress check result if commander executes a PC action
                     if commander_action['action'] == "OpenProgressCheck":
                         commander_action_result_history.append(result)
 
-                    driver_step_success = InferenceRunner._execute_driver_action(
-                        er.simulator, **driver_action)
-
+                    driver_step_success = InferenceRunner._execute_driver_action(er.simulator, **driver_action)
                     InferenceRunner._update_metrics(metrics, 
                                                     commander_action,
                                                     driver_action,
                                                     commander_step_success,
                                                     driver_step_success)
 
+                    driver_action['success'] = driver_step_success
+                    commander_action['success'] = commander_step_success
                     driver_action_history.append(driver_action)
                     commander_action_history.append(commander_action)
                     driver_pose_history.append(driver_pose)
@@ -263,8 +262,8 @@ class InferenceRunner:
 
                     pred_actions.append([commander_action, driver_action])
 
-                    if commander_action['utterance'] and driver_action['utterance']:
-                        import ipdb; ipdb.set_trace()
+                    # if commander_action['utterance'] and driver_action['utterance']:
+                    #     import ipdb; ipdb.set_trace()
                     
                     if commander_action['utterance']:
                         dialogue_history.append((commander_action['utterance'], "commander"))
@@ -372,13 +371,15 @@ class InferenceRunner:
                                                query=obj_cls)
         elif action in ["Text"]: #, "Speech"]:
             simulator.keyboard(agent_id=0, utterance=utterance)
+        elif action == "NoOp":
+            step_success = True
         else:
             step_success, _, _ = simulator.apply_motion(motion_name = action, agent_id=0)
                 
         return step_success, r
 
     @staticmethod
-    def _execute_driver_action(simulator, action, obj_relative_coord, utterance=None):
+    def _execute_driver_action(simulator, action, predicted_click, utterance=None):
         if action in ["NoOp"]:
             return True
         
@@ -390,8 +391,8 @@ class InferenceRunner:
             return True
 
         if action in obj_interaction_actions:
-            y = obj_relative_coord[0]
-            x = obj_relative_coord[1]
+            y = predicted_click[0]
+            x = predicted_click[1]
             step_success, _, _ = simulator.apply_object_interaction(
                 action, 1, x, y)
             return step_success

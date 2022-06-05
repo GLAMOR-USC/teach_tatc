@@ -2,3 +2,6 @@ __pycache__
 *.jpeg
 *.jpg
 *.pyc
+src/TEACh.egg-info/*
+experiments
+wandb

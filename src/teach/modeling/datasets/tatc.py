@@ -66,7 +66,7 @@ class TATCDataset(BaseDataset):
                 task_json, self.commander_vocab_out, agent="commander")
             feat["driver_action"] = TATCDataset.load_action(
                 task_json, self.driver_vocab_out, agent="driver")
-            feat["object"] = self.load_object_classes(task_json,
+            feat["object"], feat['obj_interaction_action'] = self.load_object_classes(task_json,
                                                       self.vocab_obj)
 
         return feat
@@ -117,17 +117,21 @@ class TATCDataset(BaseDataset):
             raise NotImplementedError(
                 "Unknown action_type {}".format(action_type))
         return lang_action
-
+            
     def load_object_classes(self, task_json, vocab=None):
         """
         load object classes for interactive actions
         """
         object_classes = []
+        indices = []
         for idx, (commander_action,
                   driver_action) in enumerate(task_json["actions_low"]):
-            if self.args.compute_train_loss_over_history:
-                if "oid" in driver_action and driver_action["oid"] is not None:
-                    object_class = driver_action["oid"].split("|")[0]
-                    object_classes.append(object_class if vocab is None else
-                                          vocab.word2index(object_class))
-        return object_classes
+            # if self.args.compute_train_loss_over_history:
+            if "oid" in driver_action and driver_action["oid"] is not None:
+                object_class = driver_action["oid"].split("|")[0]
+                object_classes.append(object_class if vocab is None else
+                                        vocab.word2index(object_class))
+                indices.append(1)
+            else:
+                indices.append(0)
+        return object_classes, indices

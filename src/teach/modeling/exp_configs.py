@@ -25,6 +25,8 @@ def cfg_exp():
     # run the code on a small chunk of data
     fast_epoch = False
 
+    use_wandb = False
+    
     # Set this to 1 if running on a Mac and to large numbers like 250 if running on EC2
     lmdb_max_readers = 1
 
@@ -62,7 +64,7 @@ def cfg_eval():
     # shuffle the trajectories
     shuffle = False
     # max steps before episode termination
-    max_steps = 1000
+    max_steps = 20
     # max API execution failures before episode termination
     max_fails = 10
     # subgoals to evaluate independently, eg:all or GotoLocation,PickupObject or 0,1

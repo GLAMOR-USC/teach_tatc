@@ -60,21 +60,22 @@ class Model(base.Model):
         emb_diag_hist, lengths_lang = self.embed_lang(inputs["combined_lang"], vocab)
         emb_diag_hist = self.dataset_enc(emb_diag_hist, vocab) if self.dataset_enc else emb_diag_hist
 
-        # embed frames and actions
-
-        # driver has extra done action
-        # maybe duplicate the last frame 
-
-        frames = inputs["frames"]
-        frames = torch.cat([frames, frames[:, -1].unsqueeze(1)], dim=1).to(self.args.device)
-        
+        frames = inputs["frames"]        
         emb_frames, emb_object = self.embed_frames(frames)
-        lengths_frames = inputs["lengths_frames"] + 1
-        emb_driver_actions = self.embed_actions(inputs["driver_action"])
-        emb_commander_actions = self.embed_actions(inputs["commander_action"])
+        lengths_frames = inputs["lengths_frames"]
+
+        if 'driver_action' in inputs:
+            emb_driver_actions = self.embed_actions(inputs["driver_action"])
+        else:
+            emb_driver_actions = []
+
+        if 'commander_action' in inputs:
+            emb_commander_actions = self.embed_actions(inputs["commander_action"])
+        else:
+            emb_commander_actions = [] 
 
         lengths_actions = lengths_frames.clone()
-        length_frames_max = inputs["length_frames_max"] + 1
+        length_frames_max = inputs["length_frames_max"]
 
         assert emb_frames.shape[1] == emb_driver_actions.shape[1]
         
@@ -149,11 +150,11 @@ class Model(base.Model):
         self.frames_traj = torch.zeros(1, 0, *self.visual_tensor_shape)
         self.action_traj = torch.zeros(1, 0).long()
 
-    def step(self, input_dict, vocab, prev_action=None):
+    def step(self, input_dict, vocab, prev_action=None, agent="driver"):
         """
         forward the model for a single time-step (used for real-time execution during eval)
         """
-        frames = input_dict["frames"]
+        frames = input_dict[f"{agent}_frames"]
         device = frames.device
         if prev_action is not None:
             prev_action_int = vocab["action_low"].word2index(prev_action)
@@ -164,13 +165,11 @@ class Model(base.Model):
         action_traj_pad = torch.cat((self.action_traj.to(device), torch.zeros((1, 1)).to(device).long()), dim=1)
         model_out = self.forward(
             vocab=vocab["word"],
-            lang=input_dict["lang"],
-            lengths_lang=input_dict["lengths_lang"],
-            length_lang_max=input_dict["length_lang_max"],
             frames=self.frames_traj.clone(),
             lengths_frames=torch.tensor([self.frames_traj.size(1)]),
             length_frames_max=self.frames_traj.size(1),
-            action=action_traj_pad,
+            driver_action=action_traj_pad,
+            **input_dict
         )
         step_out = {}
         for key, value in model_out.items():
@@ -201,7 +200,6 @@ class Model(base.Model):
 
         # object classes loss
         if len(gt_dict["object"]) > 0:
-            import ipdb; ipdb.set_trace()
             object_pred = model_out["object"]
             object_gt = torch.cat(gt_dict["object"], dim=0)
 
@@ -262,6 +260,10 @@ class Model(base.Model):
         preds = model_util.extract_action_preds(model_out, self.pad, self.vocab_out, lang_only=True)
         stop_token = self.vocab_out.word2index("Stop")
         gt_actions = model_util.tokens_to_lang(gt_dict["driver_action"], self.vocab_out, {self.pad, stop_token})
+        total = gt_dict["driver_pad in actionaction"].view(-1).shape[0]
+        num_pad = (gt_dict["driver_action"] == self.pad).sum()
+        exact_real = (model_out['action'].argmax(-1) == gt_dict["driver_action"]).float().sum() / (total - num_pad)
+        metrics_dict['exact_real'] = [exact_real.item()]
         model_util.compute_f1_and_exact(metrics_dict, [p["action"] for p in preds], gt_actions, "action")
         model_util.compute_obj_class_precision(
             metrics_dict, gt_dict, model_out["object"], compute_train_loss_over_history

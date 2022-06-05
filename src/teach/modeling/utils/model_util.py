@@ -101,13 +101,10 @@ def load_model(model_name, fsave, device, check_epoch=None, test_mode=False):
     if model_name == "seq2seq_attn":
         model_cls = import_module(
             "modeling.models.seq2seq_attn.seq2seq_attn").Module
-    else:
-        model_cls = import_module("alfred.model.learned").LearnedModel
+    elif model_name == "ET":
+        model_cls = import_module("modeling.models.ET.ET").Module
 
-    # model = model_cls(save["args"], save["embs_ann"], save["vocab_out"], test_mode)
-    print(save["vocab"].keys())
-    model = model_cls(save["args"], {}, save["vocab"], test_mode)
-
+    model = model_cls(save["args"], save["embs_ann"], save["vocab"], test_mode)
     model.load_state_dict(save["model"])
     OptimizerClass = torch.optim.Adam if save[
         "args"].optimizer == "adam" else torch.optim.AdamW
@@ -149,7 +146,7 @@ def save_model(model, model_name, stats, optimizer=None, symlink=False):
                 "model": state_dict,
                 "optim": optimizer.state_dict(),
                 "args": model.args,
-                "vocab_out": model.vocab_out,
+                "vocab": model.vocab,
                 "embs_ann": model.embs_ann,
             },
             save_path,
@@ -275,67 +272,108 @@ def generate_attention_mask(len_lang, len_frames, device, num_input_actions=0):
     all_to_all = torch.cat((lang_to_all, frames_to_all, actions_to_all), dim=0)
     return all_to_all
 
-
-def process_prediction(action, aux_action_output, pad, vocab_action,
-                       clean_special_tokens, aux_action_output_key):
+def process_prediction(action, objects, pad, vocab_action, clean_special_tokens, predict_object=True):
     """
     process a single trajectory, return it as a dict
     """
-
     # remove padding tokens
-    # if pad in action:
-    #     pad_start_idx = action.index(pad)
-    #     action = action[:pad_start_idx]
-    #     aux_action_output = aux_action_output[:pad_start_idx]
-
+    if pad in action:
+        pad_start_idx = action.index(pad)
+        action = action[:pad_start_idx]
+        objects = objects[:pad_start_idx]
     # if clean_special_tokens:
     #     # remove <<stop>> tokens
     #     stop_token = vocab_action.word2index("Stop")
     #     if stop_token in action:
     #         stop_start_idx = action.index(stop_token)
     #         action = action[:stop_start_idx]
-    #         aux_action_output = aux_action_output[:stop_start_idx]
-    
+    #         objects = objects[:stop_start_idx]
     # index to API actions
     words = vocab_action.index2word(action)
 
+    if predict_object:
+        pred_object = objects[None].max(2)[1].cpu().numpy()
+    else:
+        pred_object = None
     pred_processed = {
         "action": " ".join(words),
-        aux_action_output_key: aux_action_output,
+        "object": pred_object,
     }
     return pred_processed
 
 
-def extract_action_preds(model_out,
-                         pad,
-                         vocab_action,
-                         clean_special_tokens=True,
-                         lang_only=False,
-                         agent="driver"):
-
-    if agent == "commander":
-        out_key = "obj_cls"
-        zipped_data = zip(model_out["out_action_low"].max(2)[1].tolist(),
-                      model_out[f"out_action_{out_key}"].max(2)[1].tolist())
-    else:
-        # out_key = "coord"
-        # zipped_data = zip(model_out["out_action_low"].max(2)[1].tolist(),
-        #               model_out[f"out_action_{out_key}"][0].tolist())
-        out_key = "object"
-        zipped_data = zip(model_out["action"].max(2)[1].tolist(),
-                      model_out[f"object"][0].tolist())
-
-    # predict_object = not lang_only
+def extract_action_preds(model_out, pad, vocab_action, clean_special_tokens=True, lang_only=False):
+    """
+    output processing for a VLN agent
+    """
+    zipped_data = zip(model_out["action"].max(2)[1].tolist(), model_out["object"])
+    predict_object = not lang_only
     preds_list = [
-        process_prediction(action,
-                           aux_action_output,
-                           pad,
-                           vocab_action,
-                           clean_special_tokens,
-                           aux_action_output_key=out_key)
-        for action, aux_action_output in zipped_data
+        process_prediction(action, objects, pad, vocab_action, clean_special_tokens, predict_object)
+        for action, objects in zipped_data
     ]
     return preds_list
+    
+# def process_prediction(action, aux_action_output, pad, vocab_action,
+#                        clean_special_tokens, aux_action_output_key):
+#     """
+#     process a single trajectory, return it as a dict
+#     """
+
+#     # remove padding tokens
+#     # if pad in action:
+#     #     pad_start_idx = action.index(pad)
+#     #     action = action[:pad_start_idx]
+#     #     aux_action_output = aux_action_output[:pad_start_idx]
+
+#     # if clean_special_tokens:
+#     #     # remove <<stop>> tokens
+#     #     stop_token = vocab_action.word2index("Stop")
+#     #     if stop_token in action:
+#     #         stop_start_idx = action.index(stop_token)
+#     #         action = action[:stop_start_idx]
+#     #         aux_action_output = aux_action_output[:stop_start_idx]
+    
+#     # index to API actions
+#     words = vocab_action.index2word(action)
+
+#     pred_processed = {
+#         "action": " ".join(words),
+#         aux_action_output_key: aux_action_output,
+#     }
+#     return pred_processed
+
+
+# def extract_action_preds(model_out,
+#                          pad,
+#                          vocab_action,
+#                          clean_special_tokens=True,
+#                          lang_only=False,
+#                          agent="driver"):
+
+#     if agent == "commander":
+#         out_key = "obj_cls"
+#         zipped_data = zip(model_out["out_action_low"].max(2)[1].tolist(),
+#                       model_out[f"out_action_{out_key}"].max(2)[1].tolist())
+#     else:
+#         # out_key = "coord"
+#         # zipped_data = zip(model_out["out_action_low"].max(2)[1].tolist(),
+#         #               model_out[f"out_action_{out_key}"][0].tolist())
+#         out_key = "object"
+#         zipped_data = zip(model_out["action"].max(2)[1].tolist(),
+#                       model_out[f"object"][0].tolist())
+
+#     # predict_object = not lang_only
+#     preds_list = [
+#         process_prediction(action,
+#                            aux_action_output,
+#                            pad,
+#                            vocab_action,
+#                            clean_special_tokens,
+#                            aux_action_output_key=out_key)
+#         for action, aux_action_output in zipped_data
+#     ]
+#     return preds_list
 
 
 def compute_f1_and_exact(metrics, preds, labels, loss_key):
@@ -344,41 +382,34 @@ def compute_f1_and_exact(metrics, preds, labels, loss_key):
     """
     m = collections.defaultdict(list)
     for pred_str, label_str in zip(preds, labels):
-        pred_list, label_list = pred_str.lower().split(
-            " "), label_str.lower().split(" ")
+        pred_list, label_list = pred_str.lower().split(" "), label_str.lower().split(" ")
         # compute f1 score for the full sequence of actions
-        m["{}/f1".format(loss_key)].append(
-            metric_util.compute_f1(label_str, pred_str))
+        m["{}/f1".format(loss_key)].append(metric_util.compute_f1(label_str, pred_str))
         # compute exact matching for each timestep individually
         for pred_action, label_action in zip(pred_list, label_list):
-            m["{}/exact".format(loss_key)].append(
-                metric_util.compute_exact(label_action, pred_action))
+            m["{}/exact".format(loss_key)].append(metric_util.compute_exact(label_action, pred_action))
     m_averaged = {k: sum(v) / len(v) for k, v in m.items()}
     for k, v in m_averaged.items():
         metrics[k].append(v)
 
 
-def compute_obj_class_precision(metrics, gt_dict, classes_out,
-                                compute_train_loss_over_history):
+def compute_obj_class_precision(metrics, gt_dict, classes_out, compute_train_loss_over_history):
     """
     compute precision of predictions for interaction object classes
     """
     if len(gt_dict["object"]) > 0:
-        if compute_train_loss_over_history:
-            interact_idxs = torch.nonzero(gt_dict["obj_interaction_action"])
-        else:
-            interact_idxs = torch.nonzero(gt_dict["driver_actions_pred_mask"] *
-                                          gt_dict["obj_interaction_action"])
+        # if compute_train_loss_over_history:
+        interact_idxs = torch.nonzero(gt_dict["obj_interaction_action"])
+        # else:
+        #     interact_idxs = torch.nonzero(gt_dict["driver_actions_pred_mask"] * gt_dict["obj_interaction_action"])
         obj_classes_prob = classes_out[tuple(interact_idxs.T)]
         obj_classes_pred = obj_classes_prob.max(1)[1]
         obj_classes_gt = torch.cat(gt_dict["object"], dim=0)
-        precision = torch.sum(
-            obj_classes_pred == obj_classes_gt) / len(obj_classes_gt)
+        precision = torch.sum(obj_classes_pred == obj_classes_gt) / len(obj_classes_gt)
         metrics["action/object"].append(precision.item())
     else:
         metrics["action/object"].append(0.0)
-
-
+        
 def obj_classes_loss(pred_obj_cls, gt_obj_cls, interact_idxs):
     """
     Compute a cross-entropy loss for the object class predictions.

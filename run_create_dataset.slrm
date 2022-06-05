@@ -1,0 +1,21 @@
+#!/bin/bash 
+#SBATCH --job-name=collect_data
+#SBATCH --partition=debug
+#SBATCH --nodes=1
+#SBATCH --time=20:00:00
+#SBATCH --cpus-per-task=20
+#SBATCH --gpus-per-node=1
+
+HOME=/home/anthony/teach_tatc
+DATA=/home/anthony/teach_data
+
+conda activate teach
+cd /home/anthony/teach_tatc
+source setup.sh
+CUDA_VISIBLE_DEVICES=0 python -m modeling.datasets.create_dataset \
+    with args.visual_checkpoint=$TEACH_LOGS/checkpoints/pretrained/fasterrcnn_model.pth \
+    args.data_input=$TEACH_DATA/games_orig \
+    args.data_output=tatc_dataset_full_3 \
+    args.fast_epoch=False \
+    args.vocab_path=None \
+    args.num_workers=20 >> ${DATA}/stdout.txt 2>> ${DATA}/stderr.txt
