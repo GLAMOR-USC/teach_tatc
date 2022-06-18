@@ -27,8 +27,11 @@ class DummyCommander(object):
     
     def step(self, input_dict, vocab, prev_action, agent="commander", **kwargs):
         obj_cls = 0
-        self.turns += 1
+        self.turns += 1 
 
+        if len(input_dict['driver_action_history']) > 0:        
+            driver_last_action = input_dict['driver_action_history'][-1]
+        
         if self.turns == 0:
             action_output = dict(
                 action="Text",
@@ -40,7 +43,12 @@ class DummyCommander(object):
         elif self.turns == 1:
             print('Forcing progress check!')
             action = 'OpenProgressCheck'
-        elif prev_action == "OpenProgressCheck":
+        elif (
+            prev_action == "OpenProgressCheck"
+            or not driver_last_action['success']
+            or driver_last_action['action'] == "Text"
+        ):
+            # If driver failed last action, provide it next subgoal
             action = "Text"
         else:
             action = "NoOp"

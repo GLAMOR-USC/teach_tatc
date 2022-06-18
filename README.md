@@ -11,8 +11,6 @@ Please include appropriate licensing and attribution when using our data and cod
 
 Note: The TEACh repository at https://github.com/alexa/teach is centered around the EDH and TFD challenges in which the agent must learn to produce actions from only dialogue history. This repository is adapted for the TATC challenge. In TATC, two agents *Commander* and *Follower* collaborate via natural language dialogue to solve the tasks. 
 
-![teach](https://user-images.githubusercontent.com/16139634/153962103-3afd420d-3318-401f-8f7d-ad2b6d7fc5b7.png)
-
 ## Prerequisites
 - python3 `>=3.7,<=3.8`
 - python3.x-dev, example: `sudo apt install python3.8-dev`
@@ -31,7 +29,7 @@ Run the following script:
 sh download_data.sh
 ```
 
-This will download and extract the archive files (`games.tar.gz`, `meta_data.tar.gz`) in the default 
+Download and extract the archive files (`games.tar.gz`, `meta_data.tar.gz`) in the default 
 directory (`/tmp/teach-dataset`). To download the data used for the EDH challenge please refer to the README at https://github.com/alexa/teach.
 
 ## Remote Server Setup
@@ -115,9 +113,7 @@ rm et_checkpoints.zip
 ```
 
 Perform data preprocessing (this extracts image features and does some processing of game jsons). 
-
-<!--- This step is **optional** as we already provide the preprocessed version of the dataset. However, we provide the command here for those who want to perform additional preprocessing. --->
-
+This step is **optional** as we already provide the preprocessed version of the dataset. However, we provide the command here for those who want to perform additional preprocessing. 
 ```buildoutcfg
 python -m modeling.datasets.create_dataset \
     with args.visual_checkpoint=$TEACH_LOGS/pretrained/fasterrcnn_model.pth \
@@ -135,11 +131,10 @@ Also see `modeling/exp_configs.py` and `modeling/models/seq2seq_attn/configs.py`
 
 ```buildoutcfg
 agent=driver or commander
-preprocessed_path=/path/to/preprocessed/features
 CUDA_VISIBLE_DEVICES=0 python -m modeling.train \
     with exp.model=seq2seq_attn \
     exp.name=seq2seq_attn_${agent} \
-    exp.data.train=${preprocessed_path} \
+    exp.data.train=tatc_dataset \
     exp.agent=${agent} \
     seq2seq.epochs=20 \
     seq2seq.batch=8 \
@@ -173,8 +168,59 @@ python src/teach/cli/inference.py \
     --device cpu
 ```
 
-## Evaluation
+## Note about model I/O
 
+### Driver
+---
+Driver actions:
+- Navigation, Interaction, Text
+
+Driver input: 
+- Driver current frame 
+- Driver pose
+- Driver action history 
+- Driver observation history
+- Dialogue history
+
+Driver output:
+- Navigation or interaction action
+- (x, y) coordinates of object or object class selection
+
+### Commander
+--- 
+
+Commander actions:
+- OpenProgressCheck, SearchObject, SearchOid, Text
+
+Commander inputs:
+- Commander current frame
+- Commander pose
+- Commander action history
+- Driver pose history
+- Driver observation history
+- Dialogue history
+- Action dependent
+    - OpenProgressCheck: progress check output
+    - SearchObject: target mask and target object frame
+    - SearchOid: target mask and target object frame
+
+Note: Commander does not get the task as input. It needs to first call 
+OpenProgressCheck to see the task and communicate the task description to the Driver. Additionally, the Commander does not have direct access to the Driver's action history. It needs to infer the Driver's action success through the Driver's visual observation (e.g. if the frame doesn't change between timesteps).
+
+Commander outputs: 
+- Action / Text
+- Action dependent:
+    - SearchObject: Object id 
+    - SearchOid: Object name
+
+
+
+## FAQ
+
+## Submission
+Coming soon!
+
+<!---
 We include sample scripts for inference and calculation of metrics. `teach_inference` and `teach_eval`. 
 `teach_inference` is a wrapper that implements loading a game instance, interacting with the simulator as well as writing the game
 file and predicted action sequence as JSON files after each inference run. It dynamically loads the model based on the `--model_module`
@@ -204,6 +250,7 @@ teach_eval \
     --split valid_seen \
     --metrics_file $METRICS_FILE
 ```    
+-->
 
 ## Security
 
@@ -213,5 +260,3 @@ See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more inform
 
 The code is licensed under the MIT License (see SOFTWARELICENSE), images are licensed under Apache 2.0 
 (see IMAGESLICENSE) and other data files are licensed under CDLA-Sharing 1.0 (see DATALICENSE).
-
-

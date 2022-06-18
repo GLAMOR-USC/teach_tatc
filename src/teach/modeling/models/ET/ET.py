@@ -37,7 +37,7 @@ class Module(nn.Module):
         self.model = ModelClass(args, embs_ann, self.vocab_out, self.pad, self.seg, for_inference)
         self.for_inference = for_inference
 
-        if self.args.use_wandb:
+        if self.args.use_wandb and not for_inference:
             wandb.init(
                 project="teach_et_baseline", 
                 config=self.args,

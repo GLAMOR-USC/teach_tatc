@@ -8,7 +8,7 @@ class PosEncoding(nn.Module):
     """
     Transformer-style positional encoding with wavelets
     """
-    def __init__(self, d_model, max_len=1250):
+    def __init__(self, d_model, max_len=1500):
         super().__init__()
         self.d_model = d_model
         pe = torch.zeros(max_len, d_model)

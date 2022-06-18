@@ -260,7 +260,7 @@ class Model(base.Model):
         preds = model_util.extract_action_preds(model_out, self.pad, self.vocab_out, lang_only=True)
         stop_token = self.vocab_out.word2index("Stop")
         gt_actions = model_util.tokens_to_lang(gt_dict["driver_action"], self.vocab_out, {self.pad, stop_token})
-        total = gt_dict["driver_pad in actionaction"].view(-1).shape[0]
+        total = gt_dict["driver_action"].view(-1).shape[0]
         num_pad = (gt_dict["driver_action"] == self.pad).sum()
         exact_real = (model_out['action'].argmax(-1) == gt_dict["driver_action"]).float().sum() / (total - num_pad)
         metrics_dict['exact_real'] = [exact_real.item()]
