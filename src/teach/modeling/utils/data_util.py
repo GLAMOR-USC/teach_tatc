@@ -45,10 +45,10 @@ def read_traj_images(json_path, image_folder):
         driver_images.append(os.path.join(constants.TEACH_DATA, interaction["driver_obs"]))
 
         # If successful commander action
-        if interaction["agent_id"] > 500 and interaction["success"]:
+        if interaction["action_id"] > 500 and interaction["success"]:
             target_images.append(os.path.join(constants.TEACH_DATA, interaction["targetobject_frame"]))
             mask_images.append(os.path.join(constants.TEACH_DATA, interaction["targetobject_mask"]))
-            target_idx.append(interactions.index(i))
+            target_idx.append(interactions.index(interaction))
 
     logger.debug("Loading images from %s" % images_dir)
     logger.debug("Expected commander image files: %s" %
