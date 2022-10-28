@@ -511,10 +511,9 @@ class EpisodeReplay:
             mask_frame = np.zeros_like(frames["targetobject"])
             if "shown_oid" in r and len(r["shown_oid"]) > 0:
                 mask_points = np.where(
-                    self.simulator.get_target_object_seg_mask(r["shown_oid"])
-                    ["mask"] == 1)[:2]
-                for p in mask_points:
-                    mask_frame[p] = (255, 255, 255)
+                    self.simulator.get_target_object_seg_mask(r["shown_oid"])["mask"] == 1)[:2]
+                for pidx in range(len(mask_points[0])):
+                    mask_frame[mask_points[0][pidx],mask_points[1][pidx]] = (255, 255, 255)
             self._write_frame(
                 mask_frame,
                 os.path.join(
